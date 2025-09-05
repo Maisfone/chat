@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+/* Optional tweaks */
+html, body, #root { height: 100%; }
+.scroll-smooth { scroll-behavior: smooth; }
+
+/* Hide legacy audio record button in chat composer */
+.chat-composer button.border-slate-300 { display: none !important; }
+.chat-composer button.border-slate-300 + span { display: none !important; }
+
+/* Destaque quando navegar para uma resposta */
+.reply-highlight {
+  animation: replyFlash 2s ease-out;
+}
+@keyframes replyFlash {
+  0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
+  30% { box-shadow: 0 0 0 6px rgba(59,130,246,0.2); }
+  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+}
+
+/* Modern look & feel */
+:root {
+  --chat-border: 226 232 240; /* slate-200 */
+  --chat-blue: 37 99 235; /* blue-600 */
+  --chat-bg: #f8fafc; /* slate-50 */
+}
+body.dark {
+  --chat-border: 51 65 85; /* slate-700 */
+  --chat-bg: #0b1220; /* near slate-950 */
+}
+
+/* Composer as glass/pill */
+.chat-composer {
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  backdrop-filter: blur(8px) saturate(1.05);
+  background: rgba(255,255,255,0.7);
+  border-top: 1px solid rgb(var(--chat-border) / 0.7);
+}
+body.dark .chat-composer {
+  background: rgba(15,23,42,0.6); /* slate-900 */
+}
+.chat-composer input:not([type='file']) {
+  border-radius: 9999px;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgb(var(--chat-border));
+  box-shadow: 0 1px 1px rgba(2,6,23,.06);
+}
+.chat-composer input:not([type='file']):focus {
+  outline: none;
+  border-color: rgb(var(--chat-blue));
+  box-shadow: 0 0 0 2px rgba(var(--chat-blue), .35);
+}
+
+/* Wallpaper sutil na área de mensagens */
+.chat-bg {
+  background-color: var(--chat-bg);
+  /* Camadas: padrão sutil + véu + imagem (se existir) */
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(2, 6, 23, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.82), rgba(255,255,255,0.82)),
+    url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axv9QAAAABJRU5ErkJggg==');
+  background-size: 22px 22px, auto, cover;
+  background-position: top left, center, center;
+  background-repeat: repeat, no-repeat, no-repeat;
+  background-attachment: local, local, local;
+}
+body.dark .chat-bg {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(2,6,23,0.35), rgba(2,6,23,0.35)),
+    url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axv9QAAAABJRU5ErkJggg==');
+}
+
+/* Variante estilo WhatsApp: verde suave + padrão pontilhado */
+/* Modo WhatsApp ativado por atributo no body */
+body[data-chat-bg="whatsapp"] .chat-bg {
+  --wa-base: #e7f2ec;
+  --wa-dot: rgba(16, 50, 35, 0.08);
+  --wa-veil: rgba(255,255,255,0.8);
+  background-color: var(--wa-base);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--wa-dot) 1.2px, transparent 1.2px),
+    linear-gradient(to bottom, var(--wa-veil), var(--wa-veil));
+  background-size: 24px 24px, auto;
+  background-position: top left, center;
+  background-repeat: repeat, no-repeat;
+}
+body.dark[data-chat-bg="whatsapp"] .chat-bg {
+  --wa-base: #0d1715;
+  --wa-dot: rgba(255,255,255,0.06);
+  --wa-veil: rgba(2,6,23,0.25);
+}

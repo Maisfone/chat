@@ -1,0 +1,561 @@
+import React, { useEffect, useRef, useState } from 'react'
+import { api, absUrl } from '../services/api.js'
+import { ioClient } from '../services/socket.js'
+import { getUser } from '../state/auth.js'
+
+export default function Chat() {
+  const [groups, setGroups] = useState([])
+  const [dms, setDms] = useState([])
+  const [people, setPeople] = useState([])
+  const [active, setActive] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [text, setText] = useState('')
+  const [file, setFile] = useState(null)
+  const [err, setErr] = useState('')
+  const [recording, setRecording] = useState(false)
+  const [recError, setRecError] = useState('')
+  const [recTime, setRecTime] = useState(0)
+  const [replyTo, setReplyTo] = useState(null)
+  const mediaRecRef = useRef(null)
+  const mediaStreamRef = useRef(null)
+  const recTimerRef = useRef(null)
+  const inputRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const listRef = useRef(null)
+  const bottomRef = useRef(null)
+  const [showEmoji, setShowEmoji] = useState(false)
+  const [menuFor, setMenuFor] = useState(null)
+  const [highlightId, setHighlightId] = useState(null)
+  const emojis = ['😀','😁','😂','🤣','😊','😍','😘','😎','🤩','😇','😉','😅','😴','🤔','🙄','😐','😢','😭','😡','👍','👎','👏','🙏','💪','🔥','✨','🎉','❤️','💙','💚','💛','💜','🤍','🤝','👌','✌️','👀','🧠','☕','🍕','🎧','📎']
+  const user = getUser()
+
+  function Avatar({ url, name, align }) {
+    const size = 28
+    const style = { width: size, height: size, borderRadius: '50%', objectFit: 'cover', marginLeft: align==='right'?8:0, marginRight: align==='left'?8:0 }
+    if (url) return <img src={absUrl(url)} alt={name||'avatar'} style={style} />
+    const initials = (name||'U').trim().slice(0,2).toUpperCase()
+    return <div style={{ ...style, background:'#cbd5e1', color:'#334155', display:'grid', placeItems:'center', fontSize:12, fontWeight:'bold' }}>{initials}</div>
+  }
+
+  useEffect(() => { (async () => {
+    const g = await api.get('/groups')
+    setGroups(g)
+    const dmList = await api.get('/dm')
+    setDms(dmList)
+    const ppl = await api.get('/users/all')
+    setPeople(ppl)
+    // Restaurar conversa ativa anterior, se existir
+    const saved = localStorage.getItem('chat_active')
+    if (saved) {
+      const foundG = g.find(x => x.id === saved)
+      if (foundG) { setActive(foundG); return }
+      const foundDM = dmList.find(x => x.groupId === saved)
+      if (foundDM) { setActive({ id: foundDM.groupId, name: foundDM.other?.name || 'Direto' }); return }
+    }
+    if (g[0]) setActive(g[0])
+  })() }, [])
+
+  // Entrar nas salas de todos os grupos para atualizar badges em tempo real (sem DMs)
+  useEffect(() => {
+    const s = ioClient()
+    try { groups.forEach(g => s.emit('group:join', g.id)) } catch {}
+  }, [groups])
+
+  // Entrar nas salas de todas as DMs para atualizar badges dos usuários
+  useEffect(() => {
+    const s = ioClient()
+    try { dms.forEach(dm => s.emit('group:join', dm.groupId)) } catch {}
+  }, [dms])
+
+  // Abrir conversa: usa um grupo que ambos participam (não cria DM)
+  async function openDm(otherId, closeDrawer = false) {
+    try {
+      const shared = await api.get(`/users/${otherId}/shared-groups`)
+      if (!shared || shared.length === 0) {
+        setErr('Vocês não compartilham nenhum grupo')
+        return
+      }
+      // Escolhe o primeiro (ou o mais antigo); poderia ser um seletor se houver vários
+      const g = shared[0]
+      setActive({ id: g.id, name: g.name })
+      if (closeDrawer) setLeftOpen(false)
+    } catch (e) {
+      setErr('Falha ao abrir conversa')
+    }
+  }
+
+  // Iniciar conversa: tenta grupo em comum; se não houver, cria/abre DM
+  async function startConversation(otherId, closeDrawer = false) {
+    setErr('')
+    try {
+      const dm = await api.get(`/dm/with/${otherId}`)
+      if (dm?.groupId) {
+        setDms(prev => [{ id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: 0 }, ...prev.filter(x => x.groupId !== dm.groupId)])
+        setActive({ id: dm.groupId, name: dm.other?.name || 'Direto' })
+        if (closeDrawer) setLeftOpen(false)
+        return
+      }
+    } catch {}
+    try {
+      const dm = await api.post(`/dm/${otherId}`)
+      if (dm?.groupId) {
+        setDms(prev => [{ id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: 0 }, ...prev.filter(x => x.groupId !== dm.groupId)])
+        setActive({ id: dm.groupId, name: dm.other?.name || 'Direto' })
+        if (closeDrawer) setLeftOpen(false)
+        return
+      }
+    } catch (e) {
+      setErr(e.message || 'Falha ao abrir conversa')
+      return
+    }
+    setErr('Nao foi possivel iniciar a conversa')
+  }
+
+  // Join apenas da conversa ativa (economiza conexões/salas)
+
+  useEffect(() => {
+    if (!active) return
+    let unsub = () => {}
+    ;(async () => {
+      const list = await api.get(`/messages/${active.id}?take=50`)
+      setMessages(list.reverse())
+      try { await api.post(`/messages/${active.id}/read`, {}) } catch {}
+      setGroups(prev => prev.map(g => g.id === active.id ? { ...g, _unread: 0 } : g))
+      setDms(prev => prev.map(d => d.groupId === active.id ? { ...d, _unread: 0 } : d))
+      const s = ioClient()
+      // Remove listeners antigos para evitar duplicação
+      try { s.off('message:new') } catch {}
+      try { s.off('message:deleted') } catch {}
+      s.emit('group:join', active.id)
+      const onNew = (msg) => {
+        if (msg.groupId === active.id) {
+          setMessages(prev => {
+            // increment reply count on parent if needed
+            if (msg.replyTo?.id) {
+              return prev.map(m => m.id === msg.replyTo.id ? { ...m, _count: { replies: (m._count?.replies || 0) + 1 } } : m).concat(msg)
+            }
+            return [...prev, msg]
+          })
+        } else {
+          // incrementar badge de não lidas na lista
+          setGroups(prev => prev.map(g => g.id === msg.groupId ? { ...g, _unread: (g._unread || 0) + 1 } : g))
+          setDms(prev => prev.map(d => d.groupId === msg.groupId ? { ...d, _unread: (d._unread || 0) + 1 } : d))
+        }
+      }
+      const onDeleted = (payload) => {
+        if (payload.groupId === active.id) setMessages(prev => prev.map(m => m.id === payload.id ? { ...m, deletedAt: payload.deletedAt } : m))
+      }
+      s.on('message:new', onNew)
+      s.on('message:deleted', onDeleted)
+      unsub = () => { setMenuFor(null); s.off('message:new', onNew); s.off('message:deleted', onDeleted); s.emit('group:leave', active.id) }
+    })()
+    return () => unsub()
+  }, [active?.id])
+
+  // Persistir conversa ativa para não "sumir" após recarregar/alterar
+  useEffect(() => {
+    if (active?.id) {
+      try { localStorage.setItem('chat_active', active.id) } catch {}
+    }
+  }, [active?.id])
+
+  // Auto-scroll para o fim ao receber/enviar mensagens
+  useEffect(() => {
+    // Aguarda render para calcular altura
+    const t = setTimeout(() => {
+      if (listRef.current) {
+        listRef.current.scrollTop = listRef.current.scrollHeight
+      }
+      if (bottomRef.current) {
+        try { bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }) } catch {}
+      }
+    }, 0)
+    return () => clearTimeout(t)
+  }, [messages, active?.id])
+
+  async function sendMessage(e) {
+    if (e && e.preventDefault) e.preventDefault()
+    setErr('')
+    if (!active) return
+    try {
+      const hasText = Boolean(text.trim())
+      const hasFile = Boolean(file)
+
+      // 1) Se houver texto, detectar tipo por URL (gif/imagem) ou texto puro
+      if (hasText) {
+        const content = text.trim()
+        const isUrl = /^(https?:\/\/\S+)/i.test(content)
+        const lower = content.toLowerCase()
+        const isGif = isUrl && (/(\.gif($|\?))/i.test(lower))
+        const isImg = isUrl && (/(\.png|\.jpg|\.jpeg|\.webp|\.bmp|\.svg)($|\?)/i.test(lower))
+        const type = isGif ? 'gif' : (isImg ? 'image' : 'text')
+        await api.post(`/messages/${active.id}`, { type, content, replyToId: replyTo?.id || null })
+        setText('')
+        setReplyTo(null)
+      }
+
+      // 2) Se houver arquivo, faz upload (pode acompanhar o texto no mesmo envio)
+      if (hasFile) {
+        const form = new FormData()
+        form.append('file', file)
+        const kind = file.type?.startsWith('audio') ? 'audio' : 'image'
+        const q = replyTo?.id ? `&replyToId=${replyTo.id}` : ''
+        await api.upload(`/messages/${active.id}/upload?type=${kind}${q}`, form)
+        setFile(null)
+        setReplyTo(null)
+      }
+    } catch (e) {
+      setErr(e.message || 'Falha ao enviar mensagem')
+    }
+  }
+
+  function startReply(m) {
+    setReplyTo(m)
+  }
+
+  async function deleteMessage(m) {
+    if (!confirm('Excluir esta mensagem?')) return
+    try {
+      await api.delete(`/messages/${m.id}`)
+      setMessages(prev => prev.map(x => x.id === m.id ? { ...x, deletedAt: new Date().toISOString() } : x))
+    } catch (e) {
+      setErr(e.message || 'Falha ao excluir')
+    }
+  }
+
+  function goToFirstReply(m) {
+    const target = messages.find(x => x.replyTo?.id === m.id)
+    if (target) {
+      const el = document.getElementById(`msg-${target.id}`)
+      if (el) {
+        try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {}
+        setHighlightId(target.id)
+        setTimeout(() => setHighlightId(null), 2000)
+      }
+    }
+  }
+
+  function insertEmoji(emo) {
+    const el = inputRef.current
+    if (!el) { setText(t => t + emo); setShowEmoji(false); return }
+    const start = el.selectionStart ?? text.length
+    const end = el.selectionEnd ?? text.length
+    const next = text.slice(0, start) + emo + text.slice(end)
+    setText(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = start + emo.length
+      try { el.setSelectionRange(pos, pos) } catch {}
+    })
+    setShowEmoji(false)
+  }
+
+  async function startRecording() {
+    setRecError('')
+    if (recording) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaStreamRef.current = stream
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+      const mr = new MediaRecorder(stream, { mimeType: mime })
+      mediaRecRef.current = mr
+      const chunks = []
+      mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: mime })
+          const file = new File([blob], `rec-${Date.now()}.webm`, { type: mime })
+          const form = new FormData()
+          form.append('file', file)
+          if (active?.id) await api.upload(`/messages/${active.id}/upload?type=audio`, form)
+        } catch (e) {
+          setRecError(e.message || 'Falha ao salvar áudio')
+        } finally {
+          cleanupRecording()
+        }
+      }
+      mr.start()
+      setRecording(true)
+      setRecTime(0)
+      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000)
+    } catch (e) {
+      setRecError('Acesso ao microfone negado ou indisponível')
+      cleanupRecording()
+    }
+  }
+
+  function stopRecording() {
+    try { mediaRecRef.current?.stop() } catch {}
+  }
+
+  function cleanupRecording() {
+    setRecording(false)
+    if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null }
+    setRecTime(0)
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop())
+      mediaStreamRef.current = null
+    }
+    mediaRecRef.current = null
+  }
+
+  async function startDm(otherId) {
+    const res = await api.get(`/dm/with/${otherId}`)
+    // Obtém/atualiza lista de DMs e define ativa
+    const dmList = await api.get('/dm')
+    setDms(dmList)
+    const group = { id: res.groupId, name: (people.find(p=>p.id===otherId)?.name || 'DM') }
+    setActive(group)
+  }
+
+  const [leftOpen, setLeftOpen] = useState(false)
+  return (
+    <div className="relative flex h-full">
+      {leftOpen && (
+        <>
+          <div className="absolute inset-0 bg-black/20 z-10" onClick={()=>setLeftOpen(false)} />
+          <div className="absolute inset-y-0 left-0 w-80 border-r border-slate-200 bg-white flex flex-col overflow-auto z-20">
+            <div className="px-3 py-2 font-semibold flex items-center justify-between">
+              <span>Grupos</span>
+              <button className="text-slate-500 hover:text-slate-700" onClick={()=>setLeftOpen(false)}>✕</button>
+            </div>
+            {groups.map(g => (
+              <button key={g.id} onClick={() => { setActive(g); setLeftOpen(false) }} className={`px-3 py-2 hover:bg-slate-50 ${active?.id===g.id ? 'bg-blue-50 text-blue-700' : ''} flex items-center justify-between`}>
+                <span className="truncate text-left">{g.name}</span>
+                {g._unread > 0 && (
+                  <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{g._unread}</span>
+                )}
+              </button>
+            ))}
+            {/* Direto oculto para não poluir a lista */}
+            {/* seção de DMs ocultada por design */}
+            <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">Pessoas</div>
+            <div className="px-3 py-2 flex flex-col gap-1">
+              {people.map(p => {
+                const dmInfo = dms.find(d => d.other?.id === p.id)
+                const unread = dmInfo?._unread || 0
+                return (
+                  <button key={p.id} onClick={() => startConversation(p.id, true)} className="hover:bg-slate-50 rounded px-2 py-1 flex items-center justify-between">
+                    <span className="flex items-center gap-2 truncate">
+                      <Avatar url={p.avatarUrl} name={p.name} />
+                      <span className="truncate">{p.name}</span>
+                    </span>
+                    {unread > 0 && (
+                      <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+      {/* Collapsed by default; toggle button */}
+      {/* Desktop sidebar */}
+      <div className="hidden md:flex w-80 border-r border-slate-200 flex-col overflow-auto">
+        <div className="px-3 py-2 font-semibold">Grupos</div>
+        {groups.map(g => (
+          <button key={g.id} onClick={() => setActive(g)} className={`px-3 py-2 hover:bg-slate-50 ${active?.id===g.id ? 'bg-blue-50 text-blue-700' : ''} flex items-center justify-between`}>
+            <span className="truncate text-left">{g.name}</span>
+            {g._unread > 0 && (
+              <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{g._unread}</span>
+            )}
+          </button>
+        ))}
+        {/* Direto (desktop) oculto para não poluir a lista */}
+        <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">Pessoas</div>
+        <div className="px-3 py-2 flex flex-col gap-1">
+          {people.map(p => {
+            const dmInfo = dms.find(d => d.other?.id === p.id)
+            const unread = dmInfo?._unread || 0
+            return (
+              <button key={p.id} onClick={() => startConversation(p.id)} className="hover:bg-slate-50 rounded px-2 py-1 flex items-center justify-between">
+                <span className="flex items-center gap-2 truncate">
+                  <Avatar url={p.avatarUrl} name={p.name} />
+                  <span className="truncate">{p.name}</span>
+                </span>
+                {unread > 0 && (
+                  <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <div className="flex-1 flex flex-col">
+        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 dark:bg-slate-900/60 backdrop-blur supports-[backdrop-filter]:bg-white/50 font-medium flex items-center gap-2">
+          <button type="button" className="md:hidden px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>setLeftOpen(v=>!v)} aria-label="Abrir menu">
+            ☰
+          </button>
+          <span>{active?.name || 'Selecione um grupo'}</span>
+        </div>
+        {false && (
+          <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex items-start gap-2">
+            <div className="border-l-4 border-blue-500 pl-2 text-sm text-slate-700 flex-1">
+              <div className="font-medium">Respondendo {replyTo.author?.name || 'mensagem'}</div>
+              <div className="truncate">
+                {replyTo.type === 'text' ? replyTo.content : (
+                  replyTo.type === 'image' ? 'Imagem' : (replyTo.type === 'audio' ? 'Áudio' : 'Anexo')
+                )}
+              </div>
+            </div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={()=>setReplyTo(null)}>Cancelar</button>
+          </div>
+        )}
+        <div ref={listRef} className="flex-1 overflow-auto p-4 space-y-3 chat-bg">
+          {messages.map((m, i) => {
+            const mine = (m.author?.id || m.authorId) === user?.id
+            const bubbleClass = mine
+              ? 'max-w-[75%] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md'
+              : 'max-w-[75%] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 dark:border-slate-700/60'
+            const lineClass = mine ? 'flex justify-end mb-2 items-end' : 'flex justify-start mb-2 items-end'
+            const prev = messages[i - 1]
+            const showDate = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString()
+            const dateLabel = (() => {
+              const date = new Date(m.createdAt)
+              const now = new Date()
+              const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+              const diff = (start(date) - start(now)) / 86400000
+              if (diff === 0) return 'Hoje'
+              if (diff === -1) return 'Ontem'
+              return date.toLocaleDateString('pt-BR')
+            })()
+            return (
+              <React.Fragment key={m.id}>
+                {showDate && (
+                  <div className="my-3 flex justify-center">
+                    <span className="text-xs text-slate-700 dark:text-slate-300 bg-white/70 dark:bg-slate-800/60 backdrop-blur rounded-full px-3 py-1 border border-slate-200/60 dark:border-slate-700/60">{dateLabel}</span>
+                  </div>
+                )}
+                <div className={lineClass} id={`msg-${m.id}`}>
+                  {!mine && <Avatar url={m.author?.avatarUrl} name={m.author?.name} align="left" />}
+                <div className={`relative group flex items-start ${highlightId===m.id ? 'reply-highlight' : ''}`}>
+                  <div className={bubbleClass}>
+                    {m.replyTo && (
+                      <button type="button" onClick={()=>{ const id=m.replyTo?.id; if(id){ const el=document.getElementById(`msg-${id}`); if(el){ try{ el.scrollIntoView({ behavior:'smooth', block:'center' }) }catch{}; setHighlightId(id); setTimeout(()=>setHighlightId(null),2000) } } }}
+                        className="mb-1 text-left w-full text-[12px] bg-white/70 dark:bg-slate-900/40 rounded-lg border-l-4 border-blue-500 px-2 py-1">
+                        <div className="font-medium text-slate-800">{m.replyTo.author?.name || 'Mensagem'}</div>
+                        <div className="truncate text-slate-700">
+                          {m.replyTo.type === 'text' ? m.replyTo.content : (m.replyTo.type === 'image' ? 'Imagem' : (m.replyTo.type === 'audio' ? 'Áudio' : 'Anexo'))}
+                        </div>
+                      </button>
+                    )}
+                  <div className="hidden">
+                    {(m.author?.name || 'Usuário')}{' • '}{new Date(m.createdAt).toLocaleString()}
+                  </div>
+                  {m.type === 'text' && <div className="whitespace-pre-wrap">{m.content}</div>}
+                  {m.type === 'image' && <img src={absUrl(m.content)} alt="imagem" className="max-w-full rounded-md" />}
+                  {m.type === 'audio' && <audio src={absUrl(m.content)} controls className="w-72" />}
+                  {(m.type === 'gif' || m.type === 'sticker') && <img src={absUrl(m.content)} alt={m.type} className="max-w-[240px] rounded-md" />}
+                    <div className="text-[10px] text-slate-500 mt-1 flex items-center justify-between gap-3">
+                      <span className="text-right ml-auto">{new Date(m.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                  </div>
+                  {/* Menu de ações (3 pontos) */}
+                  <div className="ml-1 relative">
+                    <button type="button" className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-700" onClick={()=>setMenuFor(menuFor===m.id? null : m.id)} aria-label="Ações da mensagem">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                        <path d="M12 6.75a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm0 6a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z"/>
+                      </svg>
+                    </button>
+                    {menuFor === m.id && (
+                      <div className="absolute right-0 top-6 w-32 bg-white border border-slate-200 rounded shadow z-10">
+                        {!m.deletedAt && (
+                          <button className="block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); startReply(m) }}>Responder</button>
+                        )}
+                        {((m.author?.id || m.authorId) === user?.id) && !m.deletedAt && (
+                          <button className="block w-full text-left px-3 py-1.5 text-sm text-red-600 hover:bg-red-50" onClick={()=>{ setMenuFor(null); deleteMessage(m) }}>Apagar</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {mine && <Avatar url={user?.avatarUrl} name={user?.name} align="right" />}
+              </div>
+              </React.Fragment>
+            )
+          })}
+          <div ref={bottomRef} />
+        </div>
+        {replyTo && (
+          <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-start gap-2">
+            <div className="border-l-4 border-blue-500 pl-2 text-sm text-slate-700 flex-1">
+              <div className="font-medium">Respondendo {replyTo.author?.name || 'mensagem'}</div>
+              <div className="truncate">
+                {replyTo.type === 'text' ? replyTo.content : (
+                  replyTo.type === 'image' ? 'Imagem' : (replyTo.type === 'audio' ? 'Áudio' : 'Anexo')
+                )}
+              </div>
+            </div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={()=>setReplyTo(null)}>Cancelar</button>
+          </div>
+        )}
+        <form onSubmit={sendMessage} className="flex gap-2 p-2 border-t border-slate-200 items-center relative chat-composer">
+          <button type="button" onClick={()=>setShowEmoji(v=>!v)} title="Emojis" className="px-2 py-1 rounded hover:bg-slate-100">😀</button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100" aria-label="Anexar">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 block">
+              <path d="M16.5 6.75v7.5a4.5 4.5 0 1 1-9 0V5.25a3 3 0 1 1 6 0v8.25a1.5 1.5 0 1 1-3 0V6.75a.75.75 0 0 1 1.5 0v6.75a.75.75 0 1 0 1.5 0V5.25a4.5 4.5 0 1 0-9 0v9a6 6 0 1 0 12 0v-7.5a.75.75 0 1 0-1.5 0Z" />
+            </svg>
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*,audio/*" onChange={e=>setFile(e.target.files?.[0] || null)} className="hidden" />
+          {file && (
+            <div className="max-w-[45%] truncate text-xs text-slate-700 bg-slate-100 rounded px-2 py-1 flex items-center gap-2">
+              <span className="text-slate-500">📎</span>
+              <span className="truncate" title={file.name}>{file.name}</span>
+              <button type="button" className="text-slate-500 hover:text-red-600" onClick={()=>setFile(null)}>×</button>
+            </div>
+          )}
+          <input ref={inputRef} value={text} onChange={e=>setText(e.target.value)} placeholder="Mensagem (suporta URL .gif/.jpg etc.)" className="flex-1 border rounded px-3 py-2" />
+          {recording && <span className="text-xs text-red-600 min-w-[60px]">● {recTime}s</span>}
+          <button
+            type="button"
+            onClick={() => {
+              if (text.trim() || file) {
+                sendMessage()
+              } else {
+                recording ? stopRecording() : startRecording()
+              }
+            }}
+            className={`${(text.trim() || file) ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'} inline-flex items-center justify-center rounded-full w-10 h-10`}
+            title={(text.trim() || file) ? 'Enviar' : (recording ? 'Parar gravação' : 'Gravar áudio')}
+          >
+            {(text.trim() || file) ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z"/>
+              </svg>
+            ) : (
+              recording ? (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                  <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V7a3.5 3.5 0 1 0-7 0v4a3.5 3.5 0 0 0 3.5 3.5Zm5-3.5a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20h2v-2.08A7 7 0 0 0 19 11h-2Z"/>
+                </svg>
+              )
+            )}
+          </button>
+          <button type="button" onClick={recording ? stopRecording : startRecording} title="Gravar áudio" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-100">
+            {recording ? 'Parar' : 'Gravar'}
+          </button>
+          {recording && <span className="text-xs text-red-600 min-w-[60px]">● {recTime}s</span>}
+          {/* Enviar (antigo) removido em favor do botão único */}
+          {err && <div className="text-red-600 text-sm">{err}</div>}
+          {recError && <div className="text-red-600 text-sm">{recError}</div>}
+
+          {showEmoji && (
+            <div className="absolute bottom-12 left-2 bg-white border border-slate-200 rounded-md p-2 shadow max-w-[280px]">
+              <div className="grid grid-cols-8 gap-1">
+                {emojis.map(e => (
+                  <button key={e} type="button" onClick={()=>insertEmoji(e)} className="text-xl leading-6 hover:bg-slate-100 rounded px-1">{e}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </form>
+      </div>
+    </div>
+  )
+}
+
+
