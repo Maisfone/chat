@@ -42,6 +42,87 @@ export default function Chat() {
   const recTimerRef = useRef(null)
   const user = getUser()
 
+  // Message search (current conversation)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchMatches, setSearchMatches] = useState([]) // array of message ids
+  const [searchIndex, setSearchIndex] = useState(-1)
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
+  const [desktopSearchOpen, setDesktopSearchOpen] = useState(false)
+  const [mobileSearchShown, setMobileSearchShown] = useState(false)
+  const [desktopSearchShown, setDesktopSearchShown] = useState(false)
+  // Right sidebar (profile)
+  const [rightOpen, setRightOpen] = useState(false)
+  const [rightLoading, setRightLoading] = useState(false)
+  const [meProfile, setMeProfile] = useState({ id:'', name:'', email:'', phone:'', address:'', avatarUrl:'', isAdmin:false })
+  const [rightTab, setRightTab] = useState('perfil') // 'perfil' | 'arquivos' | 'favoritos'
+  const [pfName, setPfName] = useState('')
+  const [pfPhone, setPfPhone] = useState('')
+  const [pfAddress, setPfAddress] = useState('')
+  const [pfStatus, setPfStatus] = useState('')
+  const [pfAvatar, setPfAvatar] = useState(null)
+  const [pwCurrent, setPwCurrent] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [rightMsg, setRightMsg] = useState('')
+  const [rightErr, setRightErr] = useState('')
+  // Favorites (local)
+  const [favorites, setFavorites] = useState({}) // { [groupId]: { [messageId]: true } }
+  function isFav(msgId) { return !!(favorites?.[active?.id || '']?.[msgId]) }
+  async function toggleFav(m) {
+    if (!active?.id || !m?.id) return
+    try {
+      if (isFav(m.id)) {
+        await api.del(`/messages/${m.id}/favorite`)
+        setFavorites(prev => ({ ...(prev||{}), [active.id]: { ...((prev||{})[active.id]||{}), [m.id]: undefined } }))
+        setFavorites(prev => { const group = { ...(prev[active.id]||{}) }; delete group[m.id]; return { ...prev, [active.id]: group } })
+      } else {
+        await api.post(`/messages/${m.id}/favorite`, {})
+        setFavorites(prev => ({ ...prev, [active.id]: { ...((prev||{})[active.id]||{}), [m.id]: true } }))
+      }
+    } catch (e) {}
+  }
+
+  // Load favorites for active conversation
+  useEffect(() => {
+    (async () => {
+      if (!active?.id) return
+      try {
+        const favs = await api.get(`/messages/favorites?groupId=${active.id}`)
+        const map = {}
+        for (const f of (favs||[])) { if (f?.message?.id) map[f.message.id] = true }
+        setFavorites(prev => ({ ...prev, [active.id]: map }))
+      } catch {}
+    })()
+  }, [active?.id])
+  const searchInputRef = useRef(null)
+  const mobileSearchInputRef = useRef(null)
+  const desktopSearchRef = useRef(null)
+  const desktopSearchToggleRef = useRef(null)
+  const mobileSearchBarRef = useRef(null)
+  const mobileSearchToggleRef = useRef(null)
+
+  function openDesktopSearch() {
+    if (!desktopSearchShown) setDesktopSearchShown(true)
+    setDesktopSearchOpen(true)
+    setTimeout(() => { try { searchInputRef.current?.focus(); searchInputRef.current?.select() } catch {} }, 0)
+  }
+  function closeDesktopSearch() {
+    setDesktopSearchOpen(false)
+    setTimeout(() => setDesktopSearchShown(false), 200)
+  }
+  function toggleDesktopSearch() {
+    if (desktopSearchOpen || desktopSearchShown) closeDesktopSearch(); else openDesktopSearch()
+  }
+  function openMobileSearch() {
+    if (!mobileSearchShown) setMobileSearchShown(true)
+    setMobileSearchOpen(true)
+    setTimeout(() => { try { mobileSearchInputRef.current?.focus(); mobileSearchInputRef.current?.select() } catch {} }, 0)
+  }
+  function closeMobileSearch() {
+    setMobileSearchOpen(false)
+    setTimeout(() => setMobileSearchShown(false), 200)
+  }
+  function toggleMobileSearch() { if (mobileSearchOpen || mobileSearchShown) closeMobileSearch(); else openMobileSearch() }
+
   // Load lists (groups, DMs, people)
   useEffect(() => { (async () => {
     try {
@@ -75,13 +156,53 @@ export default function Chat() {
     try { dms.forEach(dm => s.emit('group:join', dm.groupId)) } catch {}
   }, [dms])
 
+  // Hydrate DMs with last activity on initial load/refresh
+  useEffect(() => {
+    (async () => {
+      try {
+        const pending = dms.filter(dm => dm && dm.groupId && (dm._lastAt === undefined || dm._lastAt === null || dm._lastPreview === undefined))
+        if (!pending.length) return
+        const updates = {}
+        for (const dm of pending) {
+          try {
+            const list = await api.get(`/messages/${dm.groupId}?take=1`)
+            const m = Array.isArray(list) ? list[0] : null
+            const last = m?.createdAt ? new Date(m.createdAt).getTime() : 0
+            const mine = (m?.author?.id || m?.authorId) === user?.id
+            let prev = ''
+            if (m) {
+              if (m.type === 'text') prev = m.content || ''
+              else if (m.type === 'image' || m.type === 'gif') prev = 'Imagem'
+              else if (m.type === 'audio') prev = 'Áudio'
+              else prev = 'Anexo'
+              if (mine) prev = `Você: ${prev}`
+            }
+            updates[dm.groupId] = { last, prev }
+          } catch {}
+        }
+        if (Object.keys(updates).length) {
+          setDms(prev => prev.map(x => (updates[x.groupId] !== undefined ? { ...x, _lastAt: updates[x.groupId].last, _lastPreview: updates[x.groupId].prev } : x)))
+        }
+      } catch {}
+    })()
+  }, [dms])
+
   // Open DM with a person, creating if needed
   async function startConversation(otherId, closeDrawer = false) {
     setErr('')
     try {
       const dm = await api.get(`/dm/with/${otherId}`)
       if (dm?.groupId) {
-        setDms(prev => [{ id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: 0 }, ...prev.filter(x => x.groupId !== dm.groupId)])
+        setDms(prev => {
+          const existing = prev.find(x => x.groupId === dm.groupId)
+          const preservedLast = existing?._lastAt
+          const preservedUnread = existing?._unread || 0
+          const rest = prev.filter(x => x.groupId !== dm.groupId)
+          return [
+            { id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: preservedUnread, _lastAt: preservedLast },
+            ...rest,
+          ]
+        })
         setActive({ id: dm.groupId, name: dm.other?.name || 'Direto' })
         if (closeDrawer) setLeftOpen(false)
         return
@@ -90,7 +211,16 @@ export default function Chat() {
     try {
       const dm = await api.post(`/dm/${otherId}`)
       if (dm?.groupId) {
-        setDms(prev => [{ id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: 0 }, ...prev.filter(x => x.groupId !== dm.groupId)])
+        setDms(prev => {
+          const existing = prev.find(x => x.groupId === dm.groupId)
+          const preservedLast = existing?._lastAt
+          const preservedUnread = existing?._unread || 0
+          const rest = prev.filter(x => x.groupId !== dm.groupId)
+          return [
+            { id: dm.groupId, groupId: dm.groupId, other: dm.other, _unread: preservedUnread, _lastAt: preservedLast },
+            ...rest,
+          ]
+        })
         setActive({ id: dm.groupId, name: dm.other?.name || 'Direto' })
         if (closeDrawer) setLeftOpen(false)
         return
@@ -126,11 +256,11 @@ export default function Chat() {
           })
           // bump activity on active convo
           setGroups(prev => prev.map(g => g.id === active.id ? { ...g, _lastAt: ts } : g))
-          setDms(prev => prev.map(d => d.groupId === active.id ? { ...d, _lastAt: ts } : d))
+          setDms(prev => prev.map(d => d.groupId === active.id ? { ...d, _lastAt: ts, _lastPreview: (msg.type === 'text' ? msg.content : (msg.type === 'image' || msg.type === 'gif' ? 'Imagem' : (msg.type === 'audio' ? 'Áudio' : 'Anexo'))) } : d))
         } else {
           // unread + activity on other convos
           setGroups(prev => prev.map(g => g.id === msg.groupId ? { ...g, _unread: (g._unread || 0) + 1, _lastAt: ts } : g))
-          setDms(prev => prev.map(d => d.groupId === msg.groupId ? { ...d, _unread: (d._unread || 0) + 1, _lastAt: ts } : d))
+          setDms(prev => prev.map(d => d.groupId === msg.groupId ? { ...d, _unread: (d._unread || 0) + 1, _lastAt: ts, _lastPreview: (msg.type === 'text' ? msg.content : (msg.type === 'image' || msg.type === 'gif' ? 'Imagem' : (msg.type === 'audio' ? 'Áudio' : 'Anexo'))) } : d))
         }
       }
       const onDeleted = (payload) => {
@@ -212,6 +342,85 @@ export default function Chat() {
     }
   }
 
+  // Compute matches when search or messages change
+  useEffect(() => {
+    const q = (searchQuery || '').trim().toLowerCase()
+    if (!q) { setSearchMatches([]); setSearchIndex(-1); return }
+    const ids = messages.filter(m => m && !m.deletedAt && m.type === 'text' && (m.content || '').toLowerCase().includes(q)).map(m => m.id)
+    setSearchMatches(ids)
+    if (ids.length) {
+      setSearchIndex(0)
+      const el = document.getElementById(`msg-${ids[0]}`)
+      if (el) { try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {} }
+      setHighlightId(ids[0])
+      setTimeout(() => setHighlightId(null), 1500)
+    } else {
+      setSearchIndex(-1)
+    }
+  }, [searchQuery, messages, active?.id])
+
+  function jumpToMatch(next = true) {
+    if (!searchMatches.length) return
+    let idx = searchIndex
+    if (idx < 0) idx = 0
+    else idx = (idx + (next ? 1 : -1) + searchMatches.length) % searchMatches.length
+    setSearchIndex(idx)
+    const id = searchMatches[idx]
+    const el = document.getElementById(`msg-${id}`)
+    if (el) { try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch {} }
+    setHighlightId(id)
+    setTimeout(() => setHighlightId(null), 1500)
+  }
+
+  // Keyboard shortcuts: Ctrl/Cmd+F to focus search, F3/Ctrl+G to navigate
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : ''
+      const typing = tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)
+      // Ctrl/Cmd + F => focus search input
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        // Open mobile search bar on small screens
+        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+          openMobileSearch()
+        } else {
+          openDesktopSearch()
+        }
+        return
+      }
+      // F3 or Ctrl/Cmd+G => next/prev match
+      if (!typing && (e.key === 'F3' || ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')))) {
+        e.preventDefault()
+        jumpToMatch(!e.shiftKey)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [searchMatches, searchIndex])
+
+  // Close search UIs when clicking outside
+  useEffect(() => {
+    const onDocDown = (e) => {
+      const t = e.target
+      if (desktopSearchOpen || desktopSearchShown) {
+        const insideDesktop = desktopSearchRef.current && desktopSearchRef.current.contains(t)
+        const onToggle = desktopSearchToggleRef.current && desktopSearchToggleRef.current.contains(t)
+        if (!insideDesktop && !onToggle) closeDesktopSearch()
+      }
+      if (mobileSearchOpen || mobileSearchShown) {
+        const insideMobile = mobileSearchBarRef.current && mobileSearchBarRef.current.contains(t)
+        const onMobileToggle = mobileSearchToggleRef.current && mobileSearchToggleRef.current.contains(t)
+        if (!insideMobile && !onMobileToggle) closeMobileSearch()
+      }
+    }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('touchstart', onDocDown, { passive: true })
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('touchstart', onDocDown)
+    }
+  }, [desktopSearchOpen, mobileSearchOpen])
+
   // Emoji insert helper
   function insertEmoji(emo) {
     const el = inputRef.current
@@ -269,17 +478,55 @@ export default function Chat() {
     mediaRecRef.current = null
   }
 
+  // Right sidebar logic
+  async function hydrateMe(force = false) {
+    try {
+      setRightLoading(true)
+      const me = await api.get('/users/me')
+      setMeProfile(me || {})
+      if (force || !pfName) setPfName(me?.name || '')
+      if (force || !pfPhone) setPfPhone(me?.phone || '')
+      if (force || !pfAddress) setPfAddress(me?.address || '')
+      setRightErr(''); setRightMsg('')
+      try { const st = localStorage.getItem('profile_status'); if (st !== null) setPfStatus(st) } catch {}
+    } catch (e) { setRightErr('Falha ao carregar perfil') } finally { setRightLoading(false) }
+  }
+  function openRightProfile() {
+    setRightOpen(true)
+    hydrateMe(true)
+  }
+  async function saveProfile() {
+    try {
+      setRightErr(''); setRightMsg('')
+      const form = new FormData()
+      form.append('name', pfName || '')
+      if (pfPhone !== undefined && pfPhone !== null) form.append('phone', pfPhone)
+      if (pfAddress !== undefined && pfAddress !== null) form.append('address', pfAddress)
+      if (pfAvatar) form.append('avatar', pfAvatar)
+      await api.uploadPatch('/users/me', form)
+      try { localStorage.setItem('profile_status', pfStatus || '') } catch {}
+      setRightMsg('Perfil atualizado')
+      setPfAvatar(null)
+      hydrateMe(true)
+    } catch (e) { setRightErr(e?.message || 'Falha ao salvar perfil') }
+  }
+  async function changePassword() {
+    try {
+      setRightErr(''); setRightMsg('')
+      if (!pwCurrent || !pwNew) { setRightErr('Preencha senha atual e nova'); return }
+      await api.post('/users/me/password', { current: pwCurrent, password: pwNew })
+      setRightMsg('Senha atualizada')
+      setPwCurrent(''); setPwNew('')
+    } catch (e) { setRightErr(e?.message || 'Falha ao alterar senha') }
+  }
+
   // Filtered/sorted lists (WhatsApp-like: last activity desc, then unread desc, then name)
   const filteredGroups = useMemo(() => {
     const q = convQuery.trim().toLowerCase()
-    const list = q ? groups.filter(g => (g.name || '').toLowerCase().includes(q)) : groups
-    return [...list].sort((a,b) => {
-      const la = a._lastAt || 0, lb = b._lastAt || 0
-      if (la !== lb) return lb - la
-      const ua = a._unread || 0, ub = b._unread || 0
-      if (ua !== ub) return ub - ua
-      return (a.name||'').localeCompare(b.name||'')
-    })
+    // Keep groups in loaded order; only filter by query
+    return q
+      ? groups.filter(g => (g.name || '').toLowerCase().includes(q))
+      : groups
   }, [groups, convQuery])
 
   const filteredPeople = useMemo(() => {
@@ -292,7 +539,10 @@ export default function Chat() {
       if (la !== lb) return lb - la
       const ua = da?._unread || 0, ub = db?._unread || 0
       if (ua !== ub) return ub - ua
-      return (a.name||'').localeCompare(b.name||'')
+      // preserve original order as final tie-breaker (no alphabetical)
+      const ia = people.findIndex(p => p.id === a.id)
+      const ib = people.findIndex(p => p.id === b.id)
+      return ia - ib
     })
   }, [people, dms, convQuery])
 
@@ -317,21 +567,30 @@ export default function Chat() {
             ))}
             <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">Pessoas</div>
             <div className="px-3 py-2 flex flex-col gap-1">
-              {filteredPeople.map(p => {
-                const dmInfo = dms.find(d => d.other?.id === p.id)
-                const unread = dmInfo?._unread || 0
-                return (
-                  <button key={p.id} onClick={() => startConversation(p.id, true)} className="hover:bg-slate-50 rounded px-2 py-1 flex items-center justify-between">
-                    <span className="flex items-center gap-2 truncate">
-                      <Avatar url={p.avatarUrl} name={p.name} />
-                      <span className="truncate">{p.name}</span>
+            {filteredPeople.map(p => {
+              const dmInfo = dms.find(d => d.other?.id === p.id)
+              const unread = dmInfo?._unread || 0
+              const lastAt = dmInfo?._lastAt || 0
+              const lastLabel = lastAt ? new Date(lastAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''
+              const preview = dmInfo?._lastPreview || ''
+              return (
+                <button key={p.id} onClick={() => startConversation(p.id, true)} className="hover:bg-slate-50 rounded px-2 py-2 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Avatar url={p.avatarUrl} name={p.name} />
+                    <span className="flex flex-col items-start min-w-0">
+                      <span className="truncate font-medium">{p.name}</span>
+                      {preview && <span className="truncate text-xs text-slate-500 max-w-[180px]">{preview}</span>}
                     </span>
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    {lastLabel && <span className="text-[11px] text-slate-500">{lastLabel}</span>}
                     {unread > 0 && (
-                      <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
+                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
                     )}
-                  </button>
-                )
-              })}
+                  </span>
+                </button>
+              )
+            })}
             </div>
           </div>
         </>
@@ -353,21 +612,30 @@ export default function Chat() {
         ))}
         <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">Pessoas</div>
         <div className="px-3 py-2 flex flex-col gap-1">
-          {filteredPeople.map(p => {
-            const dmInfo = dms.find(d => d.other?.id === p.id)
-            const unread = dmInfo?._unread || 0
-            return (
-              <button key={p.id} onClick={() => startConversation(p.id)} className="hover:bg-slate-50 rounded px-2 py-1 flex items-center justify-between">
-                <span className="flex items-center gap-2 truncate">
-                  <Avatar url={p.avatarUrl} name={p.name} />
-                  <span className="truncate">{p.name}</span>
+        {filteredPeople.map(p => {
+          const dmInfo = dms.find(d => d.other?.id === p.id)
+          const unread = dmInfo?._unread || 0
+          const lastAt = dmInfo?._lastAt || 0
+          const lastLabel = lastAt ? new Date(lastAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const preview = dmInfo?._lastPreview || ''
+          return (
+            <button key={p.id} onClick={() => startConversation(p.id)} className="hover:bg-slate-50 rounded px-2 py-2 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 min-w-0">
+                <Avatar url={p.avatarUrl} name={p.name} />
+                <span className="flex flex-col items-start min-w-0">
+                  <span className="truncate font-medium">{p.name}</span>
+                  {preview && <span className="truncate text-xs text-slate-500 max-w-[180px]">{preview}</span>}
                 </span>
+              </span>
+              <span className="flex items-center gap-2 shrink-0">
+                {lastLabel && <span className="text-[11px] text-slate-500">{lastLabel}</span>}
                 {unread > 0 && (
-                  <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
+                  <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">{unread}</span>
                 )}
-              </button>
-            )
-          })}
+              </span>
+            </button>
+          )
+        })}
         </div>
       </div>
 
@@ -375,8 +643,185 @@ export default function Chat() {
       <div className="flex-1 flex flex-col">
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 backdrop-blur font-medium flex items-center gap-2">
           <button type="button" className="md:hidden px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>setLeftOpen(v=>!v)} aria-label="Abrir menu">☰</button>
-          <span>{active?.name || 'Selecione um grupo'}</span>
+          <button type="button" className="truncate text-left hover:underline" onClick={()=>openRightProfile()} title="Abrir perfil">{active?.name || 'Selecione um grupo'}</button>
+          <div className="ml-auto flex items-center gap-1">
+            {/* Mobile search toggle */}
+            <button ref={mobileSearchToggleRef} type="button" className="md:hidden px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" title="Buscar" aria-label="Buscar" onClick={toggleMobileSearch}>🔍</button>
+            {/* Desktop search toggle */}
+            <button ref={desktopSearchToggleRef} type="button" className="hidden md:inline-flex px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" title="Buscar" aria-label="Buscar" onClick={toggleDesktopSearch}>🔍</button>
+            {desktopSearchShown && (
+              <div ref={desktopSearchRef} className={`hidden md:flex items-center gap-1 transition-all duration-200 ease-out ${desktopSearchOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'}`}>
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={e=>setSearchQuery(e.target.value)}
+                  placeholder="Buscar mensagens..."
+                  className="border rounded px-2 py-1 text-sm w-56"
+                  aria-label="Buscar mensagens"
+                  onKeyDown={(e)=>{ if (e.key === 'Enter') { e.preventDefault(); jumpToMatch(!e.shiftKey) } }}
+                />
+                {searchQuery && (
+                  <span className="items-center text-[11px] text-slate-500 px-1">{searchMatches.length ? `${searchIndex+1}/${searchMatches.length}` : '0/0'}</span>
+                )}
+                <div className="flex items-center">
+                  <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Anterior" onClick={()=>jumpToMatch(false)}>▲</button>
+                  <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Próximo" onClick={()=>jumpToMatch(true)}>▼</button>
+                  {searchQuery && <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Limpar" onClick={()=>setSearchQuery('')}>✕</button>}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Mobile search bar */}
+        {mobileSearchShown && (
+          <div ref={mobileSearchBarRef} className={`md:hidden px-3 py-2 border-b border-slate-200 bg-white flex items-center gap-2 transition-all duration-200 ease-out ${mobileSearchOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'}`}>
+            <input
+              ref={mobileSearchInputRef}
+              value={searchQuery}
+              onChange={e=>setSearchQuery(e.target.value)}
+              placeholder="Buscar mensagens..."
+              className="flex-1 border rounded px-2 py-1 text-sm"
+              aria-label="Buscar mensagens"
+              onKeyDown={(e)=>{ if (e.key === 'Enter') { e.preventDefault(); jumpToMatch(!e.shiftKey) } }}
+            />
+            <span className="text-[11px] text-slate-500 px-1">{searchMatches.length ? `${searchIndex+1}/${searchMatches.length}` : '0/0'}</span>
+            <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Anterior" onClick={()=>jumpToMatch(false)}>▲</button>
+            <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Próximo" onClick={()=>jumpToMatch(true)}>▼</button>
+            {searchQuery && <button type="button" className="px-1.5 py-1 rounded hover:bg-slate-100" title="Limpar" onClick={()=>setSearchQuery('')}>✕</button>}
+          </div>
+        )}
+
+        {/* Right sidebar: Meu Perfil */}
+        {rightOpen && (
+          <>
+            <div className="absolute inset-0 bg-black/20 z-30" onClick={()=>setRightOpen(false)} />
+            <aside className="absolute inset-y-0 right-0 w-[360px] max-w-[90%] bg-white border-l border-slate-200 z-40 shadow-lg flex flex-col">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <div className="font-semibold">Detalhes</div>
+                <button className="text-slate-500 hover:text-slate-700" onClick={()=>setRightOpen(false)}>✕</button>
+              </div>
+              <div className="px-4 pt-2 border-b border-slate-200">
+                <div className="inline-flex items-center gap-2 text-sm">
+                  <button className={`px-3 py-2 ${rightTab==='perfil'?'border-b-2 border-blue-600 text-blue-700':'text-slate-600 hover:text-slate-800'}`} onClick={()=>setRightTab('perfil')}>Perfil</button>
+                  <button className={`px-3 py-2 ${rightTab==='arquivos'?'border-b-2 border-blue-600 text-blue-700':'text-slate-600 hover:text-slate-800'}`} onClick={()=>setRightTab('arquivos')}>Arquivos</button>
+                  <button className={`px-3 py-2 ${rightTab==='favoritos'?'border-b-2 border-blue-600 text-blue-700':'text-slate-600 hover:text-slate-800'}`} onClick={()=>setRightTab('favoritos')}>Favoritos</button>
+                </div>
+              </div>
+              <div className="p-4 space-y-4 overflow-auto flex-1">
+                {rightLoading ? (
+                  <div className="text-sm text-slate-500">Carregando...</div>
+                ) : (
+                  <>
+                    {rightTab === 'perfil' && (
+                    <>
+                    <div className="flex items-center gap-3">
+                      <div className="w-16 h-16 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                        {pfAvatar ? (
+                          <img src={URL.createObjectURL(pfAvatar)} alt="avatar" className="w-full h-full object-cover" />
+                        ) : (
+                          meProfile?.avatarUrl ? <img src={absUrl(meProfile.avatarUrl)} alt="avatar" className="w-full h-full object-cover"/> : <span className="text-slate-500">Sem foto</span>
+                        )}
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-sm text-slate-600">Foto de perfil</label>
+                        <div className="flex items-center gap-2">
+                          <input id="pfAvatar" type="file" accept="image/*" className="hidden" onChange={e=>setPfAvatar(e.target.files?.[0] || null)} />
+                          <button type="button" className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('pfAvatar').click()}>Alterar</button>
+                          {pfAvatar && <button type="button" className="px-2 py-1 rounded text-red-600 hover:bg-red-50" onClick={()=>setPfAvatar(null)}>Remover</button>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Nome</label>
+                        <input value={pfName} onChange={e=>setPfName(e.target.value)} className="w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">E-mail</label>
+                        <input value={meProfile?.email||''} disabled className="w-full border rounded px-3 py-2 bg-slate-50 text-slate-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Telefone</label>
+                        <input value={pfPhone} onChange={e=>setPfPhone(e.target.value)} className="w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Endereço</label>
+                        <input value={pfAddress} onChange={e=>setPfAddress(e.target.value)} className="w-full border rounded px-3 py-2" />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Status</label>
+                        <input value={pfStatus} onChange={e=>setPfStatus(e.target.value)} placeholder="Ex.: Disponível" className="w-full border rounded px-3 py-2" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700" onClick={saveProfile}>Salvar</button>
+                        <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>{hydrateMe(true)}}>Recarregar</button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-200 pt-3">
+                      <div className="font-semibold mb-2">Alterar senha</div>
+                      <div className="grid grid-cols-1 gap-2">
+                        <input type="password" value={pwCurrent} onChange={e=>setPwCurrent(e.target.value)} placeholder="Senha atual" className="w-full border rounded px-3 py-2" />
+                        <input type="password" value={pwNew} onChange={e=>setPwNew(e.target.value)} placeholder="Nova senha" className="w-full border rounded px-3 py-2" />
+                        <div className="flex gap-2">
+                          <button type="button" className="px-3 py-2 rounded bg-slate-800 text-white hover:bg-slate-900" onClick={changePassword}>Atualizar senha</button>
+                        </div>
+                      </div>
+                    </div>
+                    </>)}
+
+                    {rightTab === 'arquivos' && (
+                      <div className="space-y-2">
+                        {messages.filter(m => m.type !== 'text' && !m.deletedAt).map(m => (
+                          <div key={m.id} className="flex items-center justify-between border rounded px-3 py-2 text-sm">
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{m.type === 'image' || m.type==='gif' ? 'Imagem' : (m.type==='audio' ? 'Áudio' : 'Anexo')}</div>
+                              <div className="text-slate-500 truncate max-w-[220px]">{m.content}</div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleDateString('pt-BR')} {new Date(m.createdAt).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</span>
+                              <a className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50" href={absUrl(m.content)} target="_blank" rel="noreferrer">Abrir</a>
+                            </div>
+                          </div>
+                        ))}
+                        {messages.filter(m => m.type !== 'text' && !m.deletedAt).length === 0 && (
+                          <div className="text-sm text-slate-500">Nenhum arquivo nesta conversa.</div>
+                        )}
+                      </div>
+                    )}
+
+                    {rightTab === 'favoritos' && (
+                      <div className="space-y-2">
+                        {messages.filter(m => isFav(m.id)).map(m => (
+                          <div key={m.id} className="border rounded px-3 py-2 text-sm">
+                            <div className="flex items-center justify-between">
+                              <div className="font-medium truncate">{m.author?.name || 'Você'}</div>
+                              <div className="text-[11px] text-slate-500">{new Date(m.createdAt).toLocaleDateString('pt-BR')} {new Date(m.createdAt).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</div>
+                            </div>
+                            <div className="mt-1">
+                              {m.type === 'text' ? m.content : (m.type === 'image' || m.type==='gif' ? 'Imagem' : (m.type==='audio' ? 'Áudio' : 'Anexo'))}
+                            </div>
+                            <div className="mt-1">
+                              <button className="text-[12px] text-red-600 hover:underline" onClick={()=>toggleFav(m)}>Remover favorito</button>
+                            </div>
+                          </div>
+                        ))}
+                        {messages.filter(m => isFav(m.id)).length === 0 && (
+                          <div className="text-sm text-slate-500">Nenhuma mensagem favoritada nesta conversa.</div>
+                        )}
+                      </div>
+                    )}
+
+                    {rightMsg && <div className="text-green-600 text-sm">{rightMsg}</div>}
+                    {rightErr && <div className="text-red-600 text-sm">{rightErr}</div>}
+                  </>
+                )}
+              </div>
+            </aside>
+          </>
+        )}
 
         <div ref={listRef} className="flex-1 overflow-auto p-4 space-y-3">
           {messages.map((m, i) => {
@@ -403,7 +848,7 @@ export default function Chat() {
                 )}
                 <div className={`${lineClass} group`}>
                   {!mine && <div className="mr-2"><Avatar url={m.author?.avatarUrl} name={m.author?.name} /></div>}
-                  <div className={`${bubbleClass} ${highlightId===m.id ? 'ring-2 ring-yellow-400' : ''}`}>
+                  <div className={`${bubbleClass} ${highlightId===m.id ? 'ring-2 ring-yellow-400' : ''} ${searchQuery && m.type==='text' && (m.content||'').toLowerCase().includes((searchQuery||'').toLowerCase()) ? 'outline outline-2 outline-yellow-300' : ''}`}>
                     {m.replyTo && (
                       <div className="mb-1 pl-2 border-l-4 border-blue-400 text-xs text-slate-600">
                         <div className="font-medium">{m.replyTo.author?.name || 'Mensagem'}</div>
@@ -423,7 +868,12 @@ export default function Chat() {
                     ) : (
                       <a className="underline" href={absUrl(m.content)} target="_blank" rel="noreferrer">Abrir anexo</a>
                     )}
-                    <div className="mt-1 text-[10px] opacity-80">{new Date(m.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div className="mt-1 text-[10px] opacity-80 flex items-center gap-2">
+                      <span>{new Date(m.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <button type="button" title={isFav(m.id) ? 'Remover favorito' : 'Favoritar'} onClick={()=>toggleFav(m)} className={`${isFav(m.id) ? 'text-yellow-400' : 'text-slate-300 hover:text-slate-500'} transition-colors`}>
+                        ★
+                      </button>
+                    </div>
                   </div>
                   <div className="ml-1 relative">
                     <button type="button" className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-700" onClick={()=>setMenuFor(menuFor===m.id? null : m.id)} aria-label="Ações">⋯</button>
@@ -471,7 +921,19 @@ export default function Chat() {
             className={`${((text || '').trim() || file) ? 'bg-blue-600 text-white hover:bg-blue-700' : (recording ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300')} inline-flex items-center justify-center rounded-full w-10 h-10`}
             title={((text || '').trim() || file) ? 'Enviar' : (recording ? 'Parar gravação' : 'Gravar áudio')}
           >
-            {((text || '').trim() || file) ? '➤' : (recording ? '■' : '🎤')}
+            {((text || '').trim() || file) ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z"/>
+              </svg>
+            ) : (recording ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V7a3.5 3.5 0 1 0-7 0v4a3.5 3.5 0 0 0 3.5 3.5Zm5-3.5a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20h2v-2.08A7 7 0 0 0 19 11h-2Z"/>
+              </svg>
+            ))}
           </button>
           {recording && <span className="text-xs text-red-600 min-w-[60px]">⏺ {recTime}s</span>}
           {err && <div className="text-red-600 text-sm ml-2">{err}</div>}
@@ -500,3 +962,4 @@ function Avatar({ url, name }) {
   return <div style={{ ...style, background:'#cbd5e1', color:'#334155', display:'grid', placeItems:'center', fontSize:12, fontWeight:'bold' }}>{initials}</div>
 }
 
+// Helpers for right sidebar (defined after component and hoisted above via closures)

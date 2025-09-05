@@ -103,6 +103,18 @@ model MessageRead {
   @@index([userId])
 }
 
+model MessageFavorite {
+  id         String   @id @default(uuid())
+  message    Message  @relation(fields: [messageId], references: [id])
+  messageId  String   @map("message_id")
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String   @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
 // Conversas diretas (1:1) representam um grupo privado com exatamente 2 membros
 model DirectThread {
   id        String   @id @default(uuid())

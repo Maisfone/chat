@@ -134,3 +134,53 @@ router.delete('/:messageId', async (req, res) => {
 })
 
 export default router
+// Favoritar mensagem
+router.post('/:messageId/favorite', async (req, res) => {
+  const { messageId } = req.params
+  try {
+    const msg = await prisma.message.findUnique({ where: { id: messageId } })
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' })
+    // verify user is member of the group
+    const isMember = await prisma.groupMember.findFirst({ where: { groupId: msg.groupId, userId: req.user.id } })
+    if (!isMember) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+    await prisma.messageFavorite.upsert({
+      where: { messageId_userId: { messageId, userId: req.user.id } },
+      update: {},
+      create: { messageId, userId: req.user.id },
+    })
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao favoritar' })
+  }
+})
+
+// Remover favorito
+router.delete('/:messageId/favorite', async (req, res) => {
+  const { messageId } = req.params
+  try {
+    await prisma.messageFavorite.delete({ where: { messageId_userId: { messageId, userId: req.user.id } } })
+  } catch {}
+  res.json({ ok: true })
+})
+
+// Listar favoritos do usuário atual (opcional por groupId)
+router.get('/favorites', async (req, res) => {
+  try {
+    const groupId = req.query.groupId
+    const favs = await prisma.messageFavorite.findMany({
+      where: groupId ? { userId: req.user.id, message: { groupId } } : { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        message: {
+          select: {
+            id: true, groupId: true, type: true, content: true, createdAt: true,
+            author: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
+      }
+    })
+    res.json(favs)
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao listar favoritos' })
+  }
+})
