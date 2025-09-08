@@ -64,6 +64,7 @@ export default function Chat() {
   const [pwNew, setPwNew] = useState('')
   const [rightMsg, setRightMsg] = useState('')
   const [rightErr, setRightErr] = useState('')
+  const [rightFavItems, setRightFavItems] = useState([]) // favoritos carregados (mensagens)
   // Favorites (local)
   const [favorites, setFavorites] = useState({}) // { [groupId]: { [messageId]: true } }
   function isFav(msgId) { return !!(favorites?.[active?.id || '']?.[msgId]) }
@@ -72,11 +73,18 @@ export default function Chat() {
     try {
       if (isFav(m.id)) {
         await api.del(`/messages/${m.id}/favorite`)
-        setFavorites(prev => ({ ...(prev||{}), [active.id]: { ...((prev||{})[active.id]||{}), [m.id]: undefined } }))
-        setFavorites(prev => { const group = { ...(prev[active.id]||{}) }; delete group[m.id]; return { ...prev, [active.id]: group } })
+        setFavorites(prev => {
+          const next = { ...(prev || {}) }
+          const group = { ...(next[active.id] || {}) }
+          delete group[m.id]
+          next[active.id] = group
+          return next
+        })
+        setRightFavItems(prev => prev.filter(x => x.id !== m.id))
       } else {
         await api.post(`/messages/${m.id}/favorite`, {})
         setFavorites(prev => ({ ...prev, [active.id]: { ...((prev||{})[active.id]||{}), [m.id]: true } }))
+        setRightFavItems(prev => (prev?.some(x => x.id === m.id) ? prev : [m, ...(prev||[])]))
       }
     } catch (e) {}
   }
@@ -88,8 +96,10 @@ export default function Chat() {
       try {
         const favs = await api.get(`/messages/favorites?groupId=${active.id}`)
         const map = {}
-        for (const f of (favs||[])) { if (f?.message?.id) map[f.message.id] = true }
+        const items = []
+        for (const f of (favs||[])) { if (f?.message?.id) { map[f.message.id] = true; items.push(f.message) } }
         setFavorites(prev => ({ ...prev, [active.id]: map }))
+        setRightFavItems(items)
       } catch {}
     })()
   }, [active?.id])
@@ -794,7 +804,7 @@ export default function Chat() {
 
                     {rightTab === 'favoritos' && (
                       <div className="space-y-2">
-                        {messages.filter(m => isFav(m.id)).map(m => (
+                        {rightFavItems.map(m => (
                           <div key={m.id} className="border rounded px-3 py-2 text-sm">
                             <div className="flex items-center justify-between">
                               <div className="font-medium truncate">{m.author?.name || 'Você'}</div>
@@ -808,7 +818,7 @@ export default function Chat() {
                             </div>
                           </div>
                         ))}
-                        {messages.filter(m => isFav(m.id)).length === 0 && (
+                        {rightFavItems.length === 0 && (
                           <div className="text-sm text-slate-500">Nenhuma mensagem favoritada nesta conversa.</div>
                         )}
                       </div>
@@ -880,6 +890,7 @@ export default function Chat() {
                     {menuFor === m.id && (
                       <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded shadow text-sm z-10">
                         <button className="block w-full text-left px-3 py-1.5 hover:bg-slate-50" onClick={()=>{ setMenuFor(null); startReply(m) }}>Responder</button>
+                        <button className="block w-full text-left px-3 py-1.5 hover:bg-slate-50" onClick={()=>{ setMenuFor(null); toggleFav(m) }}>Favoritar</button>
                         {(m.author?.id || m.authorId) === user?.id && (
                           <button className="block w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50" onClick={()=>{ setMenuFor(null); deleteMessage(m) }}>Apagar</button>
                         )}

@@ -22,6 +22,28 @@ const storage = multer.diskStorage({
 })
 const upload = multer({ storage })
 
+// Listar favoritos do usuário atual (opcional por groupId)
+router.get('/favorites', async (req, res) => {
+  try {
+    const groupId = req.query.groupId
+    const favs = await prisma.messageFavorite.findMany({
+      where: groupId ? { userId: req.user.id, message: { groupId } } : { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        message: {
+          select: {
+            id: true, groupId: true, type: true, content: true, createdAt: true,
+            author: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
+      }
+    })
+    res.json(favs)
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao listar favoritos' })
+  }
+})
+
 // Listar mensagens de um grupo (paginação simples)
 router.get('/:groupId', async (req, res) => {
   const { groupId } = req.params
