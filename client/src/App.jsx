@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { clearAuth, getUser } from './state/auth.js'
+import { apiPublic } from './services/api.js'
 import { init as initSipBackground } from './services/sipBackground.js'
 
 export default function App() {
@@ -41,6 +42,21 @@ export default function App() {
   useEffect(() => {
     const onIcon = () => setChatIcon(localStorage.getItem('chat_icon') || '')
     window.addEventListener('chat:iconUpdated', onIcon)
+    ;(async () => {
+      try {
+        // Se não houver ícone local, tenta usar o global do servidor
+        const local = localStorage.getItem('chat_icon') || ''
+        if (!local) {
+          const res = await fetch((import.meta.env.VITE_API_URL || `${window.location.origin}/api`) + '/admin/config/public')
+          if (res.ok) {
+            const pub = await res.json()
+            if (pub?.chatIconUrl) {
+              setChatIcon(pub.chatIconUrl)
+            }
+          }
+        }
+      } catch {}
+    })()
     return () => window.removeEventListener('chat:iconUpdated', onIcon)
   }, [])
   const isActive = (path) => (loc.pathname === path ? 'text-blue-600 font-semibold' : 'text-slate-700 hover:text-blue-600')

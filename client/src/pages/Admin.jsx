@@ -1,8 +1,10 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react' 
+import { getUser } from '../state/auth.js'
 import { api } from '../services/api.js'
 
-export default function Admin() {
-  const [tab, setTab] = useState('usuarios') // 'usuarios' | 'grupos' | 'telefonia'
+export default function Admin() { 
+  const me = getUser()
+  const [tab, setTab] = useState('usuarios') // 'usuarios' | 'grupos' | 'telefonia' | 'configuracoes'
   const [error, setError] = useState('')
 
   // Users
@@ -17,6 +19,7 @@ export default function Admin() {
   const [editing, setEditing] = useState(null) // user object
   const [editSaving, setEditSaving] = useState(false)
   const [resetPwd, setResetPwd] = useState('') 
+  const [selfCurrentPwd, setSelfCurrentPwd] = useState('')
 
   // Helpers: telefone BR simples (DDD + número)
   const digitsOnly = (s) => (s || '').replace(/\D/g, '')
@@ -49,6 +52,66 @@ export default function Admin() {
   function showToast(message, type = 'info', ms = 3000) {
     setToast({ message, type })
     try { if (ms) setTimeout(() => setToast(null), ms) } catch {}
+  }
+
+  // Admin > Configurações (ícone do chat)
+  const [cfgIcon, setCfgIcon] = useState('')
+  const [cfgUrl, setCfgUrl] = useState('')
+  const [globalIconUrl, setGlobalIconUrl] = useState('')
+  // Admin > Configurações (senha do admin)
+  const [admCurrentPwd, setAdmCurrentPwd] = useState('')
+  const [admNewPwd, setAdmNewPwd] = useState('')
+  const [admNewPwd2, setAdmNewPwd2] = useState('')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('chat_icon')
+      if (saved) { setCfgIcon(saved.startsWith('data:') ? saved : ''); setCfgUrl(saved.startsWith('data:') ? '' : saved) }
+    } catch {}
+    // Carrega ícone global do servidor
+    (async () => { try { const pub = await (await fetch((import.meta.env.VITE_API_URL || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/public')).json(); if (pub?.chatIconUrl) setGlobalIconUrl(pub.chatIconUrl) } catch {} })()
+  }, [])
+  function onCfgFile(e){
+    const f = e.target.files?.[0]; if (!f) return
+    if (!f.type.startsWith('image/')) { showToast('Selecione uma imagem', 'error'); return }
+    const reader = new FileReader()
+    reader.onload = () => { setCfgIcon(String(reader.result)); setCfgUrl('') }
+    reader.readAsDataURL(f)
+  }
+  function saveCfg(e){
+    e?.preventDefault?.()
+    try {
+      const val = (cfgUrl?.trim()) || cfgIcon
+      if (!val) { showToast('Defina uma imagem ou URL', 'error'); return }
+      localStorage.setItem('chat_icon', val)
+      try { window.dispatchEvent(new Event('chat:iconUpdated')) } catch {}
+      showToast('Configurações salvas', 'success')
+    } catch { showToast('Falha ao salvar configurações', 'error') }
+  }
+
+  async function uploadGlobalIcon(file){
+    if (!file) return
+    const form = new FormData()
+    form.append('icon', file)
+    try {
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/icon', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
+      if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
+      const data = await res.json(); if (data?.chatIconUrl) { setGlobalIconUrl(data.chatIconUrl); showToast('Ícone global atualizado', 'success'); try { localStorage.setItem('chat_icon', data.chatIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')) } catch {} }
+    } catch(e){ showToast(e.message||'Falha ao enviar ícone', 'error') }
+  }
+
+  async function changeAdminPassword(e){
+    e?.preventDefault?.();
+    try {
+      const current = (admCurrentPwd||'').trim();
+      const password = (admNewPwd||'').trim();
+      const confirm = (admNewPwd2||'').trim();
+      if (!current) { showToast('Informe a senha atual', 'error'); return }
+      if (password.length < 6) { showToast('Nova senha deve ter 6+ caracteres', 'error'); return }
+      if (password !== confirm) { showToast('Confirmação não confere', 'error'); return }
+      await api.post('/users/me/password', { current, password })
+      setAdmCurrentPwd(''); setAdmNewPwd(''); setAdmNewPwd2('')
+      showToast('Senha do admin alterada', 'success')
+    } catch(e){ showToast(e.message||'Falha ao alterar senha', 'error') }
   }
 
   // Load lists (independentes)
@@ -100,9 +163,9 @@ export default function Admin() {
 
   function openEdit(u){ setEditing({ ...u }); setResetPwd('') }
   function closeEdit(){ if (editSaving) return; setEditing(null); setResetPwd('') }
-  async function saveEdit(e){
-    e?.preventDefault?.(); if (!editing) return; setEditSaving(true); setError('')
-    try {
+  async function saveEdit(e){ 
+    e?.preventDefault?.(); if (!editing) return; setEditSaving(true); setError('') 
+    try { 
       const phoneFmt = formatBrPhone(editing.phone || '')
       const phoneDigits = digitsOnly(phoneFmt)
       if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 11)) throw new Error('Telefone inválido (use DDD + número).')
@@ -114,11 +177,18 @@ export default function Admin() {
         isAdmin: !!editing.isAdmin,
         isBlocked: !!editing.isBlocked,
       }
-      await api.patch(`/users/${editing.id}`, body)
-      if (resetPwd && resetPwd.trim().length>=6){ await api.post(`/users/${editing.id}/password`, { password: resetPwd.trim() }) }
-      await refreshUsers(); closeEdit()
-    } catch (e) { setError(e.message || 'Falha ao salvar usuário') } finally { setEditSaving(false) }
-  }
+      await api.patch(`/users/${editing.id}`, body) 
+      if (resetPwd && resetPwd.trim().length>=6){ 
+        if (me?.id && editing.id === me.id){ 
+          if (!selfCurrentPwd.trim()) throw new Error('Informe a senha atual para alterar a sua senha.')
+          await api.post(`/users/me/password`, { current: selfCurrentPwd.trim(), password: resetPwd.trim() })
+        } else {
+          await api.post(`/users/${editing.id}/password`, { password: resetPwd.trim() }) 
+        }
+      } 
+      await refreshUsers(); closeEdit() 
+    } catch (e) { setError(e.message || 'Falha ao salvar usuário') } finally { setEditSaving(false) } 
+  } 
   async function deleteUser(id){ if (!confirm('Excluir este usuário?')) return; try { await api.del(`/users/${id}`); setUsers(prev=>prev.filter(u=>u.id!==id)); showToast('Usuário excluído', 'success') } catch(e){ showToast(e.message||'Falha ao excluir', 'error') } } 
 
   function openAddToGroup(u){ setAddToGroupUserId(u.id); setAddToGroupGroupId('') }
@@ -294,6 +364,7 @@ export default function Admin() {
           <button onClick={()=>setTab('usuarios')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='usuarios'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Usuários</button> 
           <button onClick={()=>setTab('grupos')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='grupos'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Grupos</button> 
           <button onClick={()=>setTab('telefonia')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='telefonia'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Telefonia</button> 
+          <button onClick={()=>setTab('configuracoes')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='configuracoes'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Configurações</button> 
         </div> 
       </div> 
 
@@ -524,6 +595,68 @@ export default function Admin() {
         </section>
       )}
 
+      {tab==='configuracoes' && (
+        <section className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <form onSubmit={saveCfg} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2">
+            <h4 className="font-medium">Aparência</h4>
+            <label className="text-sm text-slate-700">Ícone do chat</label>
+            <div className="flex items-center gap-2">
+              <input ref={el=>window.__cfgFileRef=el} id="cfg-file" className="hidden" type="file" accept="image/*" onChange={onCfgFile} />
+              <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file')?.click()}>Escolher imagem</button>
+              {(cfgIcon||cfgUrl) && <button type="button" className="px-3 py-2 rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Remover</button>}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-slate-500">Preview</div>
+                { (cfgIcon || cfgUrl) ? (
+                  <img src={cfgIcon || cfgUrl} alt="ícone" className="mt-1 w-12 h-12 rounded-full object-cover border" />
+                ) : (
+                  <div className="mt-1 w-12 h-12 rounded-full border bg-slate-100" />
+                )}
+              </div>
+              <div>
+                <div className="text-xs text-slate-500">URL (opcional)</div>
+                <input className="border rounded px-3 py-2 w-full" placeholder="https://..." value={cfgUrl} onChange={e=>{ setCfgUrl(e.target.value); if (e.target.value) setCfgIcon('') }} />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <button type="button" className="px-3 py-2 rounded border" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Limpar</button>
+              <button type="submit" className="px-3 py-2 rounded bg-blue-600 text-white">Salvar</button>
+            </div>
+          </form>
+          <div className="bg-white p-4 rounded border border-slate-200 text-sm text-slate-600">
+            <h4 className="font-medium text-slate-900">Sobre as Configurações</h4>
+            <p className="mt-2">Estas configurações são salvas no navegador (localStorage) e afetam apenas esta instância/usuário. Para definir o ícone globalmente para todos, podemos evoluir para salvar no servidor.</p>
+          </div>
+          <div className="bg-white p-4 rounded border border-slate-200 md:col-span-2">
+            <h4 className="font-medium">Ícone Global (servidor)</h4>
+            <div className="mt-2 flex items-center gap-3">
+              {globalIconUrl ? (
+                <img src={globalIconUrl} alt="global" className="w-12 h-12 rounded-full object-cover border" />
+              ) : (
+                <div className="w-12 h-12 rounded-full border bg-slate-100" />
+              )}
+              <div className="flex items-center gap-2">
+                <input id="cfg-file-global" className="hidden" type="file" accept="image/*" onChange={e=>uploadGlobalIcon(e.target.files?.[0])} />
+                <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file-global')?.click()}>Enviar e definir global</button>
+                {globalIconUrl && <button type="button" className="px-3 py-2 rounded border border-blue-300 text-blue-700 hover:bg-blue-50" onClick={()=>{ try{ localStorage.setItem('chat_icon', globalIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')); showToast('Aplicado ícone global neste navegador', 'success') } catch{} }}>Usar este ícone</button>}
+              </div>
+            </div>
+          </div>
+          <form onSubmit={changeAdminPassword} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2 md:col-span-2">
+            <h4 className="font-medium">Alterar senha do administrador</h4>
+            <div className="grid md:grid-cols-3 gap-2">
+              <input className="border rounded px-3 py-2" placeholder="Senha atual" type="password" value={admCurrentPwd} onChange={e=>setAdmCurrentPwd(e.target.value)} />
+              <input className="border rounded px-3 py-2" placeholder="Nova senha (6+)" type="password" value={admNewPwd} onChange={e=>setAdmNewPwd(e.target.value)} />
+              <input className="border rounded px-3 py-2" placeholder="Confirmar nova senha" type="password" value={admNewPwd2} onChange={e=>setAdmNewPwd2(e.target.value)} />
+            </div>
+            <div className="flex items-center justify-end">
+              <button className="px-3 py-2 rounded bg-blue-600 text-white">Alterar senha</button>
+            </div>
+          </form>
+        </section>
+      )}
+
       {editing && (
         <div className="fixed inset-0 z-50 bg-black/30 grid place-items-center" onClick={closeEdit}>
           <div className="bg-white w-full max-w-lg rounded border border-slate-200 p-4" onClick={e=>e.stopPropagation()}>
@@ -535,6 +668,9 @@ export default function Admin() {
               <input className="border rounded px-3 py-2" placeholder="Endereço" value={editing.address||''} onChange={e=>setEditing(prev=>({...prev, address:e.target.value}))} />
               <label className="text-sm inline-flex items-center gap-2"><input type="checkbox" checked={!!editing.isAdmin} onChange={e=>setEditing(prev=>({...prev, isAdmin:e.target.checked}))} /> Admin</label>
               <label className="text-sm inline-flex items-center gap-2"><input type="checkbox" checked={!!editing.isBlocked} onChange={e=>setEditing(prev=>({...prev, isBlocked:e.target.checked}))} /> Bloqueado</label>
+              {me?.id && editing.id === me.id && (
+                <input className="border rounded px-3 py-2 md:col-span-2" placeholder="Senha atual (obrigatória para trocar a sua senha)" type="password" value={selfCurrentPwd} onChange={e=>setSelfCurrentPwd(e.target.value)} />
+              )}
               <input className="border rounded px-3 py-2 md:col-span-2" placeholder="Nova senha (opcional, 6+)" type="password" value={resetPwd} onChange={e=>setResetPwd(e.target.value)} />
               <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
                 <button type="button" className="px-3 py-2 rounded border" onClick={closeEdit} disabled={editSaving}>Cancelar</button>
