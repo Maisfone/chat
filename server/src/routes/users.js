@@ -1,4 +1,4 @@
-﻿import express from 'express'
+import express from 'express'
 import { prisma } from '../prisma.js'
 import { adminRequired, authRequired } from '../middleware/auth.js'
 import bcrypt from 'bcryptjs'
@@ -11,13 +11,13 @@ const router = express.Router()
 
 router.use(authRequired)
 
-// Perfil prÃ³prio
+// Perfil próprio
 router.get('/me', async (req, res) => {
   const me = await prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, name: true, email: true, isAdmin: true, avatarUrl: true } })
   res.json(me)
 })
 
-// Grupos em comum com outro usuÃ¡rio (autenticado)
+// Grupos em comum com outro usuário (autenticado)
 router.get('/:id/shared-groups', async (req, res) => {
   const otherId = req.params.id
   const me = req.user.id
@@ -35,7 +35,7 @@ router.get('/:id/shared-groups', async (req, res) => {
   res.json(groups)
 })
 
-// Admin: grupos que um usuÃ¡rio participa
+// Admin: grupos que um usuário participa
 router.get('/:id/groups', adminRequired, async (req, res) => {
   const { id } = req.params
   const groups = await prisma.group.findMany({
@@ -45,7 +45,7 @@ router.get('/:id/groups', adminRequired, async (req, res) => {
   res.json(groups)
 })
 
-// Upload config para avatar do prÃ³prio usuÃ¡rio
+// Upload config para avatar do próprio usuário
 const uploadDir = process.env.UPLOAD_DIR || 'uploads'
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
 const storage = multer.diskStorage({
@@ -57,7 +57,7 @@ const storage = multer.diskStorage({
 })
 const upload = multer({ storage })
 
-// Atualizar perfil prÃ³prio (nome, telefone, endereÃ§o, avatar)
+// Atualizar perfil próprio (nome, telefone, endereço, avatar)
 router.patch('/me', upload.single('avatar'), async (req, res) => {
   const schema = z.object({
     name: z.string().min(2).optional(),
@@ -78,14 +78,14 @@ router.patch('/me', upload.single('avatar'), async (req, res) => {
   }
 })
 
-// Alterar senha prÃ³pria (com senha atual)
+// Alterar senha própria (com senha atual)
 router.post('/me/password', async (req, res) => {
   const schema = z.object({ current: z.string().min(1), password: z.string().min(6) })
   try {
     const { current, password } = schema.parse(req.body)
     const user = await prisma.user.findUnique({ where: { id: req.user.id } })
     const ok = await bcrypt.compare(current, user.password)
-    if (!ok) return res.status(401).json({ error: 'Senha atual invÃ¡lida' })
+    if (!ok) return res.status(401).json({ error: 'Senha atual inválida' })
     const hash = await bcrypt.hash(password, 10)
     await prisma.user.update({ where: { id: req.user.id }, data: { password: hash } })
     res.json({ ok: true })
@@ -94,7 +94,7 @@ router.post('/me/password', async (req, res) => {
   }
 })
 
-// Lista pÃºblica (autenticado) para iniciar DMs
+// Lista pública (autenticado) para iniciar DMs
 router.get('/all', async (req, res) => {
   const users = await prisma.user.findMany({
     where: { NOT: { id: req.user.id } },
@@ -104,7 +104,7 @@ router.get('/all', async (req, res) => {
   res.json(users)
 })
 
-// Admin: listar usuÃ¡rios
+// Admin: listar usuários
 router.get('/', adminRequired, async (req, res) => {
   const users = await prisma.user.findMany({
     orderBy: { createdAt: 'desc' },
@@ -113,7 +113,7 @@ router.get('/', adminRequired, async (req, res) => {
   res.json(users)
 })
 
-// Admin: criar usuÃ¡rio
+// Admin: criar usuário
 router.post('/', adminRequired, async (req, res) => {
   const schema = z.object({
     name: z.string().min(2),
@@ -127,19 +127,17 @@ router.post('/', adminRequired, async (req, res) => {
   try {
     const data = schema.parse(req.body)
     const exists = await prisma.user.findUnique({ where: { email: data.email } })
-    if (exists) return res.status(409).json({ error: 'E-mail jÃ¡ cadastrado' })
+    if (exists) return res.status(409).json({ error: 'E-mail já cadastrado' })
     const hash = await bcrypt.hash(data.password, 10)
     const user = await prisma.user.create({ data: { name: data.name, email: data.email, password: hash, isAdmin: !!data.isAdmin, phone: data.phone || null, address: data.address || null, isBlocked: !!data.isBlocked } })
-    try {
-      req.io?.emit('user:created', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl })
-    } catch {}
+    try { req.io?.emit('user:created', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl }) } catch {}
     res.status(201).json({ id: user.id })
   } catch (e) {
-    res.status(400).json({ error: 'Dados invÃ¡lidos' })
+    res.status(400).json({ error: 'Dados inválidos' })
   }
 })
 
-// Editar dados de usuÃ¡rio
+// Editar dados de usuário
 router.patch('/:id', adminRequired, async (req, res) => {
   const schema = z.object({
     name: z.string().min(2).optional(),
@@ -152,12 +150,10 @@ router.patch('/:id', adminRequired, async (req, res) => {
   try {
     const data = schema.parse(req.body)
     const user = await prisma.user.update({ where: { id: req.params.id }, data })
-    try {
-      req.io?.emit('user:updated', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl, isBlocked: user.isBlocked, isAdmin: user.isAdmin })
-    } catch {}
+    try { req.io?.emit('user:updated', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl, isBlocked: user.isBlocked, isAdmin: user.isAdmin }) } catch {}
     res.json({ ok: true })
   } catch (e) {
-    res.status(400).json({ error: 'Falha ao atualizar usuÃ¡rio' })
+    res.status(400).json({ error: 'Falha ao atualizar usuário' })
   }
 })
 
@@ -174,14 +170,14 @@ router.post('/:id/password', adminRequired, async (req, res) => {
   }
 })
 
-// Excluir usuÃ¡rio
+// Excluir usuário (simples)
 router.delete('/:id', adminRequired, async (req, res) => {
   try {
     await prisma.user.delete({ where: { id: req.params.id } })
     try { req.io?.emit('user:deleted', { id: req.params.id }) } catch {}
     res.status(204).send()
   } catch (e) {
-    res.status(400).json({ error: 'Falha ao excluir usuÃ¡rio' })
+    res.status(400).json({ error: 'Falha ao excluir usuário' })
   }
 })
 

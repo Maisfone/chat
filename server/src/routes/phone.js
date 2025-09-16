@@ -117,4 +117,15 @@ router.post('/:userId/disconnect', adminRequired, async (req, res) => {
   }
 })
 
+// Admin: excluir/remover conta SIP de um usuário
+router.delete('/:userId', adminRequired, async (req, res) => {
+  try {
+    const uid = req.params.userId
+    await prisma.sipAccount.delete({ where: { userId: uid } })
+    res.status(204).send()
+  } catch (e) {
+    res.status(404).json({ error: 'Conta SIP não encontrada' })
+  }
+})
+
 export default router

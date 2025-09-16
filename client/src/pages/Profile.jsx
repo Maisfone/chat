@@ -10,29 +10,55 @@ export default function Profile() {
   const [preview, setPreview] = useState('')
   const [current, setCurrent] = useState('')
   const [password, setPassword] = useState('')
-  const [msg, setMsg] = useState('')
-  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('') 
+  const [err, setErr] = useState('') 
+ 
+  // Helpers: máscara/validação simples de telefone BR
+  const digitsOnly = (s) => (s || '').replace(/\D/g, '')
+  const formatBrPhone = (s) => {
+    const d = digitsOnly(s).slice(0, 11)
+    if (d.length <= 2) return d
+    if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`
+    if (d.length === 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`
+    if (d.length >= 11) return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`
+    return d
+  }
 
   useEffect(() => { (async () => {
     try {
       const me = await api.get('/users/me')
       setName(me.name || '')
-      setPhone(me.phone || '')
+      setPhone(me.phone ? formatBrPhone(me.phone) : '') 
       setAddress(me.address || '')
       setPreview(me.avatarUrl || '')
     } catch (e) { setErr('Falha ao carregar perfil') }
   })() }, [])
 
-  async function saveProfile(e) {
-    e.preventDefault()
-    setMsg(''); setErr('')
-    try {
-      const form = new FormData()
-      if (name) form.append('name', name)
-      form.append('phone', phone)
-      form.append('address', address)
-      if (avatar) form.append('avatar', avatar)
-      await api.uploadPatch('/users/me', form)
+  async function saveProfile(e) { 
+    e.preventDefault() 
+    setMsg(''); setErr('') 
+    try { 
+      const phoneFmt = formatBrPhone(phone)
+      const phoneDigits = digitsOnly(phoneFmt)
+      if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 11)) throw new Error('Telefone inválido (use DDD + número).')
+
+      const nameTrim = (name||'').trim()
+      const addrTrim = (address||'').trim()
+      const body = { 
+        phone: phoneDigits ? phoneFmt : null, 
+        address: addrTrim || null, 
+      }
+      if (nameTrim) body.name = nameTrim
+
+      if (avatar) { 
+        // Atualiza campos textuais primeiro (JSON), depois avatar (multipart)
+        await api.patch('/users/me', body)
+        const form = new FormData() 
+        form.append('avatar', avatar) 
+        await api.uploadPatch('/users/me', form) 
+      } else { 
+        await api.patch('/users/me', body) 
+      } 
       // Atualiza preview buscando o perfil novamente
       try {
         const me = await api.get('/users/me')
@@ -68,7 +94,7 @@ export default function Profile() {
         </div>
         <div>
           <label className="text-sm text-slate-700">Telefone</label>
-          <input className="mt-1 w-full border rounded px-3 py-2" value={phone} onChange={e=>setPhone(e.target.value)} />
+          <input className="mt-1 w-full border rounded px-3 py-2" value={phone} onChange={e=>setPhone(formatBrPhone(e.target.value))} />
         </div>
         <div className="md:col-span-2">
           <label className="text-sm text-slate-700">Endereço</label>
