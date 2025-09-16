@@ -1,7 +1,6 @@
-import React, { useState } from 'react'
+﻿import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { apiPublic } from '../services/api.js'
-import { setAuth } from '../state/auth.js'
 
 export default function Register() {
   const [name, setName] = useState('')
@@ -18,7 +17,7 @@ export default function Register() {
     e.preventDefault()
     setError('')
     if (password !== confirm) {
-      setError('As senhas não conferem')
+      setError('As senhas nÃ£o conferem')
       return
     }
     setLoading(true)
@@ -28,9 +27,10 @@ export default function Register() {
       form.append('email', email)
       form.append('password', password)
       if (avatar) form.append('avatar', avatar)
-      const res = await apiPublic.upload('/auth/register', form)
-      setAuth(res.token, res.user)
-      nav('/')
+      await apiPublic.upload('/auth/register', form)
+      // NÃ£o faz login automÃ¡tico para nÃ£o sobrescrever sessÃ£o de admin.
+      // Redireciona para login com aviso simples via query string
+      nav('/login?registered=1')
     } catch (e) {
       setError(e.message || 'Falha no cadastro')
     } finally {
@@ -56,9 +56,10 @@ export default function Register() {
           {loading ? 'Cadastrando...' : 'Cadastrar'}
         </button>
         <div className="text-xs text-slate-600 mt-2">
-          Já possui conta? <Link className="text-blue-600 hover:underline" to="/login">Entrar</Link>
+          JÃ¡ possui conta? <Link className="text-blue-600 hover:underline" to="/login">Entrar</Link>
         </div>
       </form>
     </div>
   )
 }
+

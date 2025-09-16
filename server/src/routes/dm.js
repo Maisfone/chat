@@ -89,6 +89,16 @@ router.post('/:userId', async (req, res) => {
     }
   })
   const otherUser = full.userA.id === me ? full.userB : full.userA
+  try {
+    // Notifica todos os clientes que uma nova DM foi criada.
+    // Clientes filtram pelo seu próprio userId.
+    req.io?.emit('dm:created', {
+      groupId: full.groupId,
+      userA: { id: full.userA.id, name: full.userA.name, avatarUrl: full.userA.avatarUrl },
+      userB: { id: full.userB.id, name: full.userB.name, avatarUrl: full.userB.avatarUrl },
+      createdAt: full.group?.createdAt || new Date().toISOString(),
+    })
+  } catch {}
   res.status(201).json({ groupId: full.groupId, other: otherUser })
 })
 

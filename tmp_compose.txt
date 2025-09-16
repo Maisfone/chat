@@ -1,0 +1,75 @@
+version: "3.8"
+
+networks:
+  minha_rede:
+    external: true
+
+services:
+  server:
+    build: ./server
+    image: mtinformatica/farmachat:server
+    container_name: farmachat-server
+    environment:
+      # Ajuste USER, PASS e DBNAME para seu Postgres
+      DATABASE_URL: postgres://postgres:1oBH87s3FXk8uPfwTUIxMgxu6rJprfsF@postgres:5432/db
+      PORT: 3000
+      # Se houver CORS mais restrito, defina:
+      # CORS_ORIGIN: https://chat.farmacon.com.br
+    networks:
+      - minha_rede
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      # HTTP -> redireciona para HTTPS
+      - traefik.http.routers.farmachat-api.rule=Host(`apichat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-api.entrypoints=web
+      # middleware de redirect (disponibilizado também neste serviço)
+      - traefik.http.middlewares.farmachat-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.farmachat-api.middlewares=farmachat-redirect
+      # HTTPS
+      - traefik.http.routers.farmachat-api-secure.rule=Host(`apichat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-api-secure.entrypoints=websecure
+      - traefik.http.routers.farmachat-api-secure.tls=true
+      - traefik.http.routers.farmachat-api-secure.tls.certresolver=le
+      # Mapear roteadores -> serviço nomeado
+      - traefik.http.routers.farmachat-api.service=farmachat-api
+      - traefik.http.routers.farmachat-api-secure.service=farmachat-api
+      - traefik.http.services.farmachat-api.loadbalancer.server.port=3000
+    restart: unless-stopped
+
+  cliente:
+    build:
+      context: ./client
+      args:
+        # O frontend espera que VITE_API_URL já inclua o sufixo /api
+        VITE_API_URL: https://apichat.farmacon.com.br/api
+        # Necessário para Socket.IO no navegador
+        VITE_SOCKET_URL: https://apichat.farmacon.com.br
+    image: farmachat:cliente
+    container_name: mtinformatica/farmachat:client
+
+    depends_on:
+      - server
+    networks:
+      - minha_rede
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      # HTTP -> HTTPS
+      - traefik.http.routers.farmachat-web.rule=Host(`chat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-web.entrypoints=web
+      # Definir o mesmo middleware de redirect neste serviço
+      - traefik.http.middlewares.farmachat-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.farmachat-web.middlewares=farmachat-redirect
+      # HTTPS
+      - traefik.http.routers.farmachat-web-secure.rule=Host(`chat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-web-secure.entrypoints=websecure
+      - traefik.http.routers.farmachat-web-secure.tls=true
+      - traefik.http.routers.farmachat-web-secure.tls.certresolver=le
+      # Mapear roteadores -> serviço nomeado
+      - traefik.http.routers.farmachat-web.service=farmachat-web
+      - traefik.http.routers.farmachat-web-secure.service=farmachat-web
+      - traefik.http.services.farmachat-web.loadbalancer.server.port=80
+    restart: unless-stopped
+

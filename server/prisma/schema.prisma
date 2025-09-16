@@ -1,6 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
+
 
 datasource db {
   provider = "postgresql"
@@ -34,12 +36,16 @@ model User {
 
   // Telefonia SIP (um por usuário)
   sipAccount       SipAccount?
+
+  // Campo inverso para MessageFavorite
+  favorites MessageFavorite[]
 }
 
 model Group {
   id         String   @id @default(uuid())
   name       String
   isPrivate  Boolean  @default(false) @map("is_private")
+  avatarUrl  String?  @map("avatar_url")
   createdAt  DateTime @default(now()) @map("created_at")
 
   members    GroupMember[]
@@ -87,6 +93,9 @@ model Message {
   replyTo    Message?    @relation("MessageReply", fields: [replyToId], references: [id])
   replyToId  String?     @map("reply_to_id")
   replies    Message[]   @relation("MessageReply")
+
+  // Campo inverso para MessageFavorite
+  favorites  MessageFavorite[]
 
   @@index([groupId, createdAt])
 }

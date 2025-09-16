@@ -1,7 +1,5 @@
 import express from 'express'
-import multer from 'multer'
-import path from 'path'
-import fs from 'fs'
+import { handleUploadSingle } from '../lib/storage.js'
 import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { authRequired } from '../middleware/auth.js'
@@ -9,18 +7,8 @@ import { authRequired } from '../middleware/auth.js'
 const router = express.Router()
 router.use(authRequired)
 
-const uploadDir = process.env.UPLOAD_DIR || 'uploads'
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname)
-    const fname = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
-    cb(null, fname)
-  }
-})
-const upload = multer({ storage })
+// Upload de arquivo (local ou S3)
+const upload = handleUploadSingle('file')
 
 // Listar favoritos do usuário atual (opcional por groupId)
 router.get('/favorites', async (req, res) => {
@@ -99,14 +87,14 @@ router.post('/:groupId', async (req, res) => {
 })
 
 // Upload de áudio/imagem
-router.post('/:groupId/upload', upload.single('file'), async (req, res) => {
+router.post('/:groupId/upload', upload, async (req, res) => {
   const { groupId } = req.params
   const kind = (req.query.type || 'audio')
   if (!['audio', 'image'].includes(kind)) return res.status(400).json({ error: 'Tipo inválido' })
   const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
   if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
-  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`
-  const url = `${base}/${uploadDir}/${req.file.filename}`
+  const url = req.file?.url
+  if (!url) return res.status(400).json({ error: 'Falha no upload' })
   const replyToId = typeof req.query.replyToId === 'string' ? req.query.replyToId : null
   const msg = await prisma.message.create({
     data: { groupId, authorId: req.user.id, type: kind, content: url, replyToId },

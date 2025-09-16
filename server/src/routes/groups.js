@@ -1,20 +1,21 @@
-import express from 'express'
+﻿import express from 'express'
 import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { adminRequired, authRequired } from '../middleware/auth.js'
+import { handleUploadSingle } from '../lib/storage.js'
 
 const router = express.Router()
 
 router.use(authRequired)
 
-// Listar grupos do usuário
+// Listar grupos do usuÃ¡rio
 router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
-    where: { members: { some: { userId: me } }, directThread: null },
+    where: { members: { some: { userId: me } }, directThread: { is: null } },
     orderBy: { createdAt: 'desc' }
   })
-  // Anexa contagem de não lidas
+  // Anexa contagem de nÃ£o lidas
   const withUnread = await Promise.all(groups.map(async (g) => {
     const unread = await prisma.message.count({
       where: {
@@ -33,7 +34,7 @@ router.get('/', async (req, res) => {
 router.get('/all', adminRequired, async (req, res) => {
   const includeDMs = String(req.query.includeDMs || 'false').toLowerCase() === 'true'
   const groups = await prisma.group.findMany({
-    where: includeDMs ? {} : { directThread: null },
+    where: includeDMs ? {} : { directThread: { is: null } },
     orderBy: { createdAt: 'desc' }
   })
   res.json(groups)
@@ -41,13 +42,13 @@ router.get('/all', adminRequired, async (req, res) => {
 
 // Admin: criar grupo
 router.post('/', adminRequired, async (req, res) => {
-  const schema = z.object({ name: z.string().min(2), isPrivate: z.boolean().optional() })
+  const schema = z.object({ name: z.string().trim().min(2), isPrivate: z.coerce.boolean().optional() })
   try {
     const { name, isPrivate } = schema.parse(req.body)
     const group = await prisma.group.create({ data: { name, isPrivate: !!isPrivate } })
     res.status(201).json(group)
   } catch (e) {
-    res.status(400).json({ error: 'Dados inválidos' })
+    res.status(400).json({ error: 'Dados invÃ¡lidos' })
   }
 })
 
@@ -60,7 +61,7 @@ router.post('/:groupId/members', adminRequired, async (req, res) => {
     const member = await prisma.groupMember.create({ data: { groupId, userId, role: role || 'member' } })
     res.status(201).json(member)
   } catch (e) {
-    res.status(400).json({ error: 'Dados inválidos ou membro já existe' })
+    res.status(400).json({ error: 'Dados invÃ¡lidos ou membro jÃ¡ existe' })
   }
 })
 
@@ -70,7 +71,7 @@ router.delete('/:groupId/members/:userId', adminRequired, async (req, res) => {
     await prisma.groupMember.delete({ where: { groupId_userId: { groupId, userId } } })
     res.status(204).send()
   } catch {
-    res.status(404).json({ error: 'Membro não encontrado' })
+    res.status(404).json({ error: 'Membro nÃ£o encontrado' })
   }
 })
 
@@ -87,7 +88,7 @@ router.get('/:groupId/members', adminRequired, async (req, res) => {
 
 // Admin: atualizar grupo (nome, privado)
 router.patch('/:groupId', adminRequired, async (req, res) => {
-  const schema = z.object({ name: z.string().min(2).optional(), isPrivate: z.boolean().optional() })
+  const schema = z.object({ name: z.string().trim().min(2).optional(), isPrivate: z.coerce.boolean().optional() })
   try {
     const data = schema.parse(req.body)
     const g = await prisma.group.update({ where: { id: req.params.groupId }, data })
@@ -97,7 +98,19 @@ router.patch('/:groupId', adminRequired, async (req, res) => {
   }
 })
 
-// Admin: excluir grupo e dependências
+// Atualizar avatar do grupo (local ou S3)
+const upload = handleUploadSingle('avatar')
+router.patch('/:groupId/avatar', adminRequired, upload, async (req, res) => {
+  try {
+    if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
+    const g = await prisma.group.update({ where: { id: req.params.groupId }, data: { avatarUrl: req.file.url } })
+    res.json({ ok: true, group: g })
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao salvar avatar' })
+  }
+})
+
+// Admin: excluir grupo e dependÃªncias
 router.delete('/:groupId', adminRequired, async (req, res) => {
   const groupId = req.params.groupId
   try {
@@ -119,3 +132,6 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
 })
 
 export default router
+
+
+
