@@ -59,6 +59,13 @@ export default function Admin() {
   const [cfgUrl, setCfgUrl] = useState('')
   const [globalIconUrl, setGlobalIconUrl] = useState('')
   const [globalWallpaperUrl, setGlobalWallpaperUrl] = useState('')
+  const [alertSounds, setAlertSounds] = useState([])
+  const [activeAlertSoundId, setActiveAlertSoundId] = useState(null)
+  const [soundName, setSoundName] = useState('')
+  const [soundUploading, setSoundUploading] = useState(false)
+  const [soundDeletingId, setSoundDeletingId] = useState('')
+  const soundInputRef = useRef(null)
+  const previewAudioRef = useRef(null)
   // Admin > Configurações (papel de parede das Conversas)
   const [cfgBg, setCfgBg] = useState(() => {
     try { return localStorage.getItem('chat_bg') || 'default' } catch { return 'default' }
@@ -67,6 +74,36 @@ export default function Admin() {
   const [admCurrentPwd, setAdmCurrentPwd] = useState('')
   const [admNewPwd, setAdmNewPwd] = useState('')
   const [admNewPwd2, setAdmNewPwd2] = useState('')
+  function syncGlobalSound(list, activeId) {
+    if (typeof window === 'undefined') return
+    try {
+      const items = Array.isArray(list) ? list : []
+      if (activeId) {
+        const active = items.find((item) => item.id === activeId)
+        if (active?.url) {
+          localStorage.setItem('notif_sound_url', active.url)
+          window.dispatchEvent(new Event('chat:alertSoundUpdated'))
+          return
+        }
+      }
+      localStorage.removeItem('notif_sound_url')
+      window.dispatchEvent(new Event('chat:alertSoundUpdated'))
+    } catch {}
+  }
+
+  async function loadAdminConfig({ silent } = {}) {
+    try {
+      const cfg = await api.get('/admin/config')
+      setGlobalIconUrl(cfg?.chatIconUrl || '')
+      setGlobalWallpaperUrl(cfg?.chatWallpaperUrl || '')
+      const list = Array.isArray(cfg?.alertSounds) ? cfg.alertSounds : []
+      setAlertSounds(list)
+      setActiveAlertSoundId(cfg?.activeAlertSoundId || null)
+      syncGlobalSound(list, cfg?.activeAlertSoundId || null)
+    } catch (e) {
+      if (!silent) showToast(e.message || 'Falha ao carregar configurações', 'error')
+    }
+  }
   useEffect(() => {
     try {
       const saved = localStorage.getItem('chat_icon')
@@ -74,6 +111,9 @@ export default function Admin() {
     } catch {}
     // Carrega ícone global do servidor
     (async () => { try { const pub = await (await fetch((import.meta.env.VITE_API_URL || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/public')).json(); if (pub?.chatIconUrl) setGlobalIconUrl(pub.chatIconUrl); if (pub?.chatWallpaperUrl) setGlobalWallpaperUrl(pub.chatWallpaperUrl) } catch {} })()
+    ;(async () => {
+      try { await loadAdminConfig({ silent: true }) } catch {}
+    })()
   }, [])
   function onCfgFile(e){
     const f = e.target.files?.[0]; if (!f) return
@@ -146,6 +186,91 @@ export default function Admin() {
       try { localStorage.removeItem('chat_wallpaper'); document.documentElement.style.removeProperty('--chat-wallpaper'); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {}
       showToast('Papel de parede global excluído', 'success')
     } catch(e){ showToast(e.message||'Falha ao excluir papel de parede', 'error') }
+  }
+
+
+  function triggerSoundUpload() {
+    try { soundInputRef.current?.click?.() } catch {}
+  }
+
+  async function onSoundSelected(e) {
+    const file = e?.target?.files?.[0]
+    if (!file) return
+    if (file.type && !file.type.startsWith('audio/')) {
+      showToast('Selecione um arquivo de áudio', 'error')
+      if (e?.target) e.target.value = ''
+      return
+    }
+    setSoundUploading(true)
+    try {
+      const form = new FormData()
+      form.append('sound', file)
+      const label = (soundName || '').trim()
+      if (label) form.append('name', label)
+      const res = await api.upload('/admin/config/alert-sounds', form)
+      const list = Array.isArray(res?.alertSounds) ? res.alertSounds : []
+      setAlertSounds(list)
+      setActiveAlertSoundId(res?.activeAlertSoundId || null)
+      syncGlobalSound(list, res?.activeAlertSoundId || null)
+      if (label) setSoundName('')
+      showToast('Som enviado', 'success')
+    } catch (err) {
+      showToast(err.message || 'Falha ao enviar som', 'error')
+    } finally {
+      setSoundUploading(false)
+      if (e?.target) e.target.value = ''
+    }
+  }
+
+  async function activateSound(id) {
+    try {
+      const res = await api.post(`/admin/config/alert-sounds/${id || 'none'}/activate`, {})
+      const list = Array.isArray(res?.alertSounds) ? res.alertSounds : []
+      setAlertSounds(list)
+      setActiveAlertSoundId(res?.activeAlertSoundId || null)
+      syncGlobalSound(list, res?.activeAlertSoundId || null)
+      showToast(id ? 'Som de alerta atualizado' : 'Bip padrão ativado', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao atualizar som de alerta', 'error')
+    }
+  }
+
+  async function deleteSound(id) {
+    if (!id) return
+    try {
+      if (typeof window !== 'undefined') {
+        const ok = window.confirm('Excluir este som de alerta?')
+        if (!ok) return
+      }
+      setSoundDeletingId(id)
+      const res = await api.del(`/admin/config/alert-sounds/${id}`)
+      const list = Array.isArray(res?.alertSounds) ? res.alertSounds : []
+      setAlertSounds(list)
+      setActiveAlertSoundId(res?.activeAlertSoundId || null)
+      syncGlobalSound(list, res?.activeAlertSoundId || null)
+      showToast('Som excluído', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao excluir som', 'error')
+    } finally {
+      setSoundDeletingId('')
+    }
+  }
+
+  function previewSound(url) {
+    if (!url) {
+      showToast('Som indisponível', 'error')
+      return
+    }
+    try {
+      previewAudioRef.current?.pause?.()
+      previewAudioRef.current = new Audio(url)
+      previewAudioRef.current.onended = () => { previewAudioRef.current = null }
+      previewAudioRef.current.play().catch(() => {
+        showToast('Não foi possível reproduzir o som', 'error')
+      })
+    } catch {
+      showToast('Não foi possível reproduzir o som', 'error')
+    }
   }
 
   async function changeAdminPassword(e){
@@ -682,6 +807,48 @@ export default function Admin() {
                   </div>
                 </div>
                 <div className="mt-2 text-xs text-slate-500">Afeta todos os usuários. A aplicação local funciona apenas neste navegador.</div>
+              </div>
+              {/* Sons de alerta */}
+              <div className="md:col-span-2">
+                <h4 className="font-medium">Sons de alerta</h4>
+                <div className="mt-1 text-xs text-slate-500">Faça upload de arquivos de áudio (mp3, wav, ogg) para usar como alerta padrão do chat.</div>
+                <div className="mt-3 flex flex-col md:flex-row md:items-end gap-3">
+                  <div className="flex-1">
+                    <label className="text-xs text-slate-500 uppercase tracking-wide">Nome (opcional)</label>
+                    <input className="mt-1 border rounded px-3 py-2 w-full" placeholder="Ex.: Alerta ping" value={soundName} onChange={e=>setSoundName(e.target.value)} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input ref={soundInputRef} type="file" accept="audio/*" className="hidden" onChange={onSoundSelected} />
+                    <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-60" onClick={triggerSoundUpload} disabled={soundUploading}>{soundUploading?'Enviando...':'Enviar som'}</button>
+                    {soundUploading && <span className="text-xs text-slate-500">Aguarde...</span>}
+                  </div>
+                </div>
+                {alertSounds.length ? (
+                  <ul className="mt-3 divide-y divide-slate-200">
+                    {alertSounds.map(sound => (
+                      <li key={sound.id} className="py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{sound.name || 'Som'}</div>
+                          <div className="text-xs text-slate-500 truncate">{sound.url}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button type="button" className="px-2 py-1 text-sm rounded border hover:bg-slate-50" onClick={()=>previewSound(sound.url)}>Ouvir</button>
+                          {activeAlertSoundId === sound.id ? (
+                            <span className="px-2 py-1 text-xs rounded-full bg-blue-50 text-blue-700 border border-blue-200">Ativo</span>
+                          ) : (
+                            <button type="button" className="px-2 py-1 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50" onClick={()=>activateSound(sound.id)}>Definir</button>
+                          )}
+                          <button type="button" className="px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-60" onClick={()=>deleteSound(sound.id)} disabled={soundDeletingId===sound.id}>{soundDeletingId===sound.id?'Excluindo...':'Excluir'}</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="mt-3 text-sm text-slate-500">Nenhum som cadastrado ainda.</div>
+                )}
+                <div className="mt-3">
+                  <button type="button" className="text-xs text-slate-600 underline disabled:opacity-60" onClick={()=>activateSound(null)} disabled={!activeAlertSoundId}>Usar bip padrão</button>
+                </div>
               </div>
             </div>
           </div>

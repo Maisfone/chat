@@ -16,29 +16,35 @@ export default function App() {
   }, []) 
   // Wallpaper: sync CSS variable and load from server if absent
   useEffect(() => {
-    const onWallpaper = () => {
+    const applyLocalWallpaper = () => {
       const w = localStorage.getItem('chat_wallpaper') || ''
       if (w) document.documentElement.style.setProperty('--chat-wallpaper', `url('${w}')`)
       else document.documentElement.style.removeProperty('--chat-wallpaper')
     }
-    window.addEventListener('chat:wallpaperUpdated', onWallpaper)
+    applyLocalWallpaper()
+    window.addEventListener('chat:wallpaperUpdated', applyLocalWallpaper)
+    const applyAlertSound = (url) => {
+      try {
+        if (url) localStorage.setItem('notif_sound_url', url)
+        else localStorage.removeItem('notif_sound_url')
+        window.dispatchEvent(new Event('chat:alertSoundUpdated'))
+      } catch {}
+    }
     ;(async () => {
       try {
-        const w = localStorage.getItem('chat_wallpaper') || ''
-        if (!w) {
-          const res = await fetch((import.meta.env.VITE_API_URL || `${window.location.origin}/api`) + '/admin/config/public')
-          if (res.ok) {
-            const pub = await res.json()
-            if (pub?.chatWallpaperUrl) {
-              document.documentElement.style.setProperty('--chat-wallpaper', `url('${pub.chatWallpaperUrl}')`)
-            }
-          }
-        } else {
-          document.documentElement.style.setProperty('--chat-wallpaper', `url('${w}')`)
+        const res = await fetch((import.meta.env.VITE_API_URL || `${window.location.origin}/api`) + '/admin/config/public')
+        if (!res.ok) return
+        const pub = await res.json()
+        const hasLocal = !!(localStorage.getItem('chat_wallpaper') || '')
+        if (!hasLocal && pub?.chatWallpaperUrl) {
+          document.documentElement.style.setProperty('--chat-wallpaper', `url('${pub.chatWallpaperUrl}')`)
+        }
+        if (Object.prototype.hasOwnProperty.call(pub || {}, 'alertSoundUrl')) {
+          applyAlertSound(pub?.alertSoundUrl || '')
         }
       } catch {}
     })()
-    return () => window.removeEventListener('chat:wallpaperUpdated', onWallpaper)
+    return () => window.removeEventListener('chat:wallpaperUpdated', applyLocalWallpaper)
   }, [])
   // Initialize background SIP registration (keeps your extension online)
   useEffect(() => {
@@ -280,4 +286,5 @@ export default function App() {
     </div>
   )
 }
+
 

@@ -665,7 +665,10 @@ export default function Chat() {
 
       const onNew = (msg) => {
         const ts = new Date(msg?.createdAt || Date.now()).getTime();
-        if (msg.groupId === active.id) {
+        const mine = (msg.author?.id || msg.authorId) === user?.id;
+        const isActive = msg.groupId === active.id;
+        const isMuted = !!muted?.[msg.groupId];
+        if (isActive) {
           setMessages((prev) => {
             if ((prev || []).some((m) => m.id === msg.id)) return prev;
             if (msg.replyTo?.id) {
@@ -693,20 +696,19 @@ export default function Chat() {
                     ...d,
                     _lastAt: ts,
                     _lastPreview:
-                      msg.type === "text"
+                      msg.type === 'text'
                         ? msg.content
-                        : msg.type === "image" || msg.type === "gif"
-                        ? "Imagem"
-                        : msg.type === "audio"
-                        ? "Áudio"
-                        : "Anexo",
+                        : msg.type === 'image' || msg.type === 'gif'
+                        ? 'Imagem'
+                        : msg.type === 'audio'
+                        ? 'Áudio'
+                        : 'Anexo',
                   }
                 : d
             )
           );
           try {
-            const mine = (msg.author?.id || msg.authorId) === user?.id;
-            if (!mine && !muted?.[active.id]) playPing();
+            if (!mine && !isMuted) playPing();
           } catch {}
         } else {
           // unread + activity on other convos
@@ -725,28 +727,26 @@ export default function Chat() {
                     _unread: (d._unread || 0) + 1,
                     _lastAt: ts,
                     _lastPreview:
-                      msg.type === "text"
+                      msg.type === 'text'
                         ? msg.content
-                        : msg.type === "image" || msg.type === "gif"
-                        ? "Imagem"
-                        : msg.type === "audio"
-                        ? "Áudio"
-                        : "Anexo",
+                        : msg.type === 'image' || msg.type === 'gif'
+                        ? 'Imagem'
+                        : msg.type === 'audio'
+                        ? 'Áudio'
+                        : 'Anexo',
                   }
                 : d
             )
           );
+          try {
+            if (!mine && !isMuted) playPing();
+          } catch {}
         }
-        // Se a conversa não está ativa e a aba estiver oculta, notifica
-        try {
-          const mine = (msg.author?.id || msg.authorId) === user?.id;
-          if (document.hidden && !mine && msg.groupId !== active.id) {
-            try {
-              playPing();
-            } catch {}
+        if (document.hidden && !mine && !isActive) {
+          try {
             showNotificationFor(msg);
-          }
-        } catch {}
+          } catch {}
+        }
       };
       const onDeleted = (payload) => {
         if (payload.groupId === active.id)
