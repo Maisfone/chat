@@ -17,7 +17,7 @@ router.get('/', adminRequired, (req, res) => {
 
 // Admin: atualizar campos simples
 router.patch('/', adminRequired, (req, res) => {
-  const allowed = ['chatIconUrl']
+  const allowed = ['chatIconUrl', 'chatWallpaperUrl']
   const patch = {}
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k]
   const cfg = updateConfig(patch)
@@ -36,5 +36,26 @@ router.post('/icon', adminRequired, upload, (req, res) => {
   }
 })
 
-export default router
+// Admin: upload do papel de parede (conversas) e já persiste URL
+const uploadWallpaper = handleUploadSingle('wallpaper')
+router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
+  try {
+    if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
+    const cfg = updateConfig({ chatWallpaperUrl: req.file.url })
+    res.json({ ok: true, chatWallpaperUrl: cfg.chatWallpaperUrl })
+  } catch (e) {
+    res.status(500).json({ error: 'Falha ao salvar papel de parede' })
+  }
+})
 
+// Admin: excluir papel de parede global
+router.delete('/wallpaper', adminRequired, (req, res) => {
+  try {
+    const cfg = updateConfig({ chatWallpaperUrl: null })
+    res.status(200).json({ ok: true, chatWallpaperUrl: cfg.chatWallpaperUrl || null })
+  } catch (e) {
+    res.status(500).json({ error: 'Falha ao excluir papel de parede' })
+  }
+})
+
+export default router

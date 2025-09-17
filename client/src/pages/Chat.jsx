@@ -25,13 +25,39 @@ export default function Chat() {
   const [leftOpen, setLeftOpen] = useState(false);
   // Pinned/Muted groups (local only)
   const [pinned, setPinned] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_pins')||'{}') } catch { return {} }
+    try {
+      return JSON.parse(localStorage.getItem("chat_pins") || "{}");
+    } catch {
+      return {};
+    }
   });
   const [muted, setMuted] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('chat_mutes')||'{}') } catch { return {} }
+    try {
+      return JSON.parse(localStorage.getItem("chat_mutes") || "{}");
+    } catch {
+      return {};
+    }
   });
-  function togglePin(id){ setPinned(prev=>{ const n={...(prev||{})}; n[id]=!n[id]; try{localStorage.setItem('chat_pins',JSON.stringify(n))}catch{} return n }) }
-  function toggleMute(id){ setMuted(prev=>{ const n={...(prev||{})}; n[id]=!n[id]; try{localStorage.setItem('chat_mutes',JSON.stringify(n))}catch{} return n }) }
+  function togglePin(id) {
+    setPinned((prev) => {
+      const n = { ...(prev || {}) };
+      n[id] = !n[id];
+      try {
+        localStorage.setItem("chat_pins", JSON.stringify(n));
+      } catch {}
+      return n;
+    });
+  }
+  function toggleMute(id) {
+    setMuted((prev) => {
+      const n = { ...(prev || {}) };
+      n[id] = !n[id];
+      try {
+        localStorage.setItem("chat_mutes", JSON.stringify(n));
+      } catch {}
+      return n;
+    });
+  }
   const [menuFor, setMenuFor] = useState(null);
   const [highlightId, setHighlightId] = useState(null);
   const [convQuery, setConvQuery] = useState("");
@@ -98,13 +124,18 @@ export default function Chat() {
     typeof document !== "undefined" ? document.title : "Chat"
   );
   const audioCtxRef = useRef(null);
-  const customBufferRef = useRef({ url: '', buffer: null });
+  const customBufferRef = useRef({ url: "", buffer: null });
   const [soundOn, setSoundOn] = useState(() => {
-    try { return localStorage.getItem("chat_sound") !== "0" } catch { return true }
+    try {
+      return localStorage.getItem("chat_sound") !== "0";
+    } catch {
+      return true;
+    }
   });
   function toggleSound() {
     try {
-      const next = !soundOn; setSoundOn(next);
+      const next = !soundOn;
+      setSoundOn(next);
       localStorage.setItem("chat_sound", next ? "1" : "0");
     } catch {}
   }
@@ -167,9 +198,12 @@ export default function Chat() {
       const ctx = audioCtxRef.current;
       // Tenta som customizado
       try {
-        const url = localStorage.getItem('notif_sound_url') || '';
+        const url = localStorage.getItem("notif_sound_url") || "";
         if (url) {
-          if (customBufferRef.current.url !== url || !customBufferRef.current.buffer) {
+          if (
+            customBufferRef.current.url !== url ||
+            !customBufferRef.current.buffer
+          ) {
             const resp = await fetch(url);
             const arr = await resp.arrayBuffer();
             const buf = await ctx.decodeAudioData(arr.slice(0));
@@ -180,7 +214,10 @@ export default function Chat() {
           const g = ctx.createGain();
           g.gain.setValueAtTime(0.0001, ctx.currentTime);
           g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.01);
-          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + Math.min(0.8, src.buffer.duration));
+          g.gain.exponentialRampToValueAtTime(
+            0.0001,
+            ctx.currentTime + Math.min(0.8, src.buffer.duration)
+          );
           src.connect(g).connect(ctx.destination);
           src.start();
           return;
@@ -189,7 +226,7 @@ export default function Chat() {
       // Fallback bip simples
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-      o.type = 'sine';
+      o.type = "sine";
       o.frequency.value = 880;
       g.gain.setValueAtTime(0.0001, ctx.currentTime);
       g.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.01);
@@ -667,7 +704,10 @@ export default function Chat() {
                 : d
             )
           );
-          try { const mine = (msg.author?.id || msg.authorId) === user?.id; if (!mine && !muted?.[active.id]) playPing(); } catch {}
+          try {
+            const mine = (msg.author?.id || msg.authorId) === user?.id;
+            if (!mine && !muted?.[active.id]) playPing();
+          } catch {}
         } else {
           // unread + activity on other convos
           setGroups((prev) =>
@@ -1101,11 +1141,15 @@ export default function Chat() {
   }
 
   // Filtered/sorted lists (WhatsApp-like): last activity desc, unread desc, then name
+  const [onlyPinned, setOnlyPinned] = useState(false);
+  const [onlyUnread, setOnlyUnread] = useState(false);
   const filteredGroups = useMemo(() => {
     const q = convQuery.trim().toLowerCase();
     let list = q
       ? groups.filter((g) => (g.name || "").toLowerCase().includes(q))
       : groups;
+    if (onlyPinned) list = list.filter((g) => !!pinned?.[g.id]);
+    if (onlyUnread) list = list.filter((g) => (g._unread || 0) > 0);
     return [...list].sort((a, b) => {
       const pa = pinned?.[a.id] ? 1 : 0;
       const pb = pinned?.[b.id] ? 1 : 0;
@@ -1116,15 +1160,23 @@ export default function Chat() {
       const ua = a?._unread || 0,
         ub = b?._unread || 0;
       if (ua !== ub) return ub - ua;
-      return (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
+      return (a.name || "").localeCompare(b.name || "", "pt-BR", {
+        sensitivity: "base",
+      });
     });
   }, [groups, convQuery]);
 
   const filteredPeople = useMemo(() => {
     const q = convQuery.trim().toLowerCase();
-    const list = q
+    let list = q
       ? people.filter((p) => (p.name || "").toLowerCase().includes(q))
       : people;
+    if (onlyUnread) {
+      list = list.filter((p) => {
+        const dm = dms.find((d) => d.other?.id === p.id);
+        return (dm?._unread || 0) > 0;
+      });
+    }
     return [...list].sort((a, b) => {
       const da = dms.find((d) => d.other?.id === a.id);
       const db = dms.find((d) => d.other?.id === b.id);
@@ -1146,7 +1198,12 @@ export default function Chat() {
     (async () => {
       try {
         const pending = (groups || []).filter(
-          (g) => g && g.id && (g._lastAt === undefined || g._lastAt === null || g._lastPreview === undefined)
+          (g) =>
+            g &&
+            g.id &&
+            (g._lastAt === undefined ||
+              g._lastAt === null ||
+              g._lastPreview === undefined)
         );
         if (!pending.length) return;
         const updates = {};
@@ -1171,7 +1228,11 @@ export default function Chat() {
           setGroups((prev) =>
             (prev || []).map((x) =>
               updates[x.id] !== undefined
-                ? { ...x, _lastAt: updates[x.id].last, _lastPreview: updates[x.id].prev }
+                ? {
+                    ...x,
+                    _lastAt: updates[x.id].last,
+                    _lastPreview: updates[x.id].prev,
+                  }
                 : x
             )
           );
@@ -1197,11 +1258,15 @@ export default function Chat() {
                 className="flex-1 border rounded px-3 py-1.5 text-sm"
               />
               <button
-                className={`text-sm px-2 py-1 rounded border ${soundOn ? 'border-green-500 text-green-700' : 'border-slate-300 text-slate-600'} hover:bg-slate-50`}
+                className={`text-sm px-2 py-1 rounded border ${
+                  soundOn
+                    ? "border-green-500 text-green-700"
+                    : "border-slate-300 text-slate-600"
+                } hover:bg-slate-50`}
                 onClick={toggleSound}
-                title={soundOn ? 'Som: ligado' : 'Som: desligado'}
+                title={soundOn ? "Som: ligado" : "Som: desligado"}
               >
-                {soundOn ? 'Som: ON' : 'Som: OFF'}
+                {soundOn ? "Som: ON" : "Som: OFF"}
               </button>
               <button
                 className="text-slate-500 hover:text-slate-700"
@@ -1211,11 +1276,16 @@ export default function Chat() {
                 ×
               </button>
             </div>
-            <div className="px-3 py-2 font-semibold">Grupos</div>
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200">
+              Grupos
+            </div>
             {filteredGroups.map((g) => {
               const lastAt = g?._lastAt || 0;
               const lastLabel = lastAt
-                ? new Date(lastAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+                ? new Date(lastAt).toLocaleTimeString("pt-BR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
                 : "";
               const preview = g?._lastPreview || "";
               const selected = active?.id === g.id;
@@ -1232,25 +1302,39 @@ export default function Chat() {
                 >
                   <span className="flex items-center gap-2 min-w-0">
                     {g.avatarUrl ? (
-                      <img src={absUrl(g.avatarUrl)} alt={g.name||'grupo'} className="w-7 h-7 rounded-full object-cover" />
+                      <img
+                        src={absUrl(g.avatarUrl)}
+                        alt={g.name || "grupo"}
+                        className="w-7 h-7 rounded-full object-cover"
+                      />
                     ) : (
                       <div className="w-7 h-7 rounded-full bg-slate-300 text-slate-700 grid place-items-center text-xs font-semibold">
                         {(g.name || "G").slice(0, 2).toUpperCase()}
                       </div>
                     )}
                     <span className="flex flex-col items-start min-w-0">
-                      <span className={`truncate font-medium ${g._unread > 0 ? "font-semibold" : ""}`}>{g.name}</span>
+                      <span
+                        className={`truncate font-medium text-sm ${
+                          g._unread > 0 ? "font-semibold" : ""
+                        }`}
+                      >
+                        {g.name}
+                      </span>
                       {preview && (
-                        <span className="truncate text-xs text-slate-500 max-w-[180px]">{preview}</span>
+                        <span className="truncate text-xs text-slate-500 max-w-[180px]">
+                          {preview}
+                        </span>
                       )}
                     </span>
                   </span>
                   <span className="flex items-center gap-2 shrink-0">
                     {lastLabel && (
-                      <span className="text-[11px] text-slate-500">{lastLabel}</span>
+                      <span className="text-[11px] text-slate-500">
+                        {lastLabel}
+                      </span>
                     )}
                     {g._unread > 0 && (
-                      <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">
+                      <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
                         {g._unread}
                       </span>
                     )}
@@ -1258,7 +1342,7 @@ export default function Chat() {
                 </button>
               );
             })}
-            <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800">
               Pessoas
             </div>
             <div className="px-3 py-2 flex flex-col gap-1">
@@ -1266,11 +1350,16 @@ export default function Chat() {
                 const els = [];
                 let last = "";
                 for (const p of filteredPeople) {
-                  const letter = ((p.name || "").trim()[0] || "?").toUpperCase();
+                  const letter = (
+                    (p.name || "").trim()[0] || "?"
+                  ).toUpperCase();
                   if (letter !== last) {
                     last = letter;
                     els.push(
-                      <div key={`hdr-${letter}`} className="px-2 pt-2 text-xs font-semibold text-slate-500 select-none">
+                      <div
+                        key={`hdr-${letter}`}
+                        className="px-2 pt-2 text-xs font-semibold text-slate-500 select-none"
+                      >
                         {letter}
                       </div>
                     );
@@ -1279,33 +1368,47 @@ export default function Chat() {
                   const unread = dmInfo?._unread || 0;
                   const lastAt = dmInfo?._lastAt || 0;
                   const lastLabel = lastAt
-                    ? new Date(lastAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+                    ? new Date(lastAt).toLocaleTimeString("pt-BR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
                     : "";
                   const preview = dmInfo?._lastPreview || "";
-                  const isSelected = active?.id && dmInfo?.groupId && active.id === dmInfo.groupId;
+                  const isSelected =
+                    active?.id &&
+                    dmInfo?.groupId &&
+                    active.id === dmInfo.groupId;
                   els.push(
                     <button
                       key={p.id}
                       onClick={() => startConversation(p.id, true)}
                       className={`rounded px-2 py-2 flex items-center justify-between gap-2 w-full text-left ${
-                        isSelected ? "bg-blue-50 text-blue-700" : "hover:bg-slate-50"
+                        isSelected
+                          ? "bg-blue-50 text-blue-700"
+                          : "hover:bg-slate-50"
                       }`}
                     >
                       <span className="flex items-center gap-2 min-w-0">
-                        <Avatar url={p.avatarUrl} name={p.name} />
+                        <Avatar url={p.avatarUrl} name={p.name} size={40} />
                         <span className="flex flex-col items-start min-w-0">
-                          <span className="truncate font-medium">{p.name}</span>
+                          <span className="truncate font-medium text-sm">
+                            {p.name}
+                          </span>
                           {preview && (
-                            <span className="truncate text-xs text-slate-500 max-w-[180px]">{preview}</span>
+                            <span className="truncate text-xs text-slate-500 max-w-[180px]">
+                              {preview}
+                            </span>
                           )}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 shrink-0">
                         {lastLabel && (
-                          <span className="text-[11px] text-slate-500">{lastLabel}</span>
+                          <span className="text-[11px] text-slate-500">
+                            {lastLabel}
+                          </span>
                         )}
                         {unread > 0 && (
-                          <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">
+                          <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
                             {unread}
                           </span>
                         )}
@@ -1313,8 +1416,12 @@ export default function Chat() {
                     </button>
                   );
                 }
-                return els.length ? els : (
-                  <div className="px-3 py-4 text-sm text-slate-500">Nenhuma pessoa encontrada</div>
+                return els.length ? (
+                  els
+                ) : (
+                  <div className="px-3 py-4 text-sm text-slate-500">
+                    Nenhuma pessoa encontrada
+                  </div>
                 );
               })()}
             </div>
@@ -1331,28 +1438,63 @@ export default function Chat() {
             placeholder="Buscar conversas..."
             className="w-full border rounded px-3 py-1.5 text-sm"
           />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              className="px-2 py-1 text-xs rounded border hover:bg-slate-50"
+              onClick={() => {
+                try {
+                  document
+                    .getElementById("people-list")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                } catch {}
+              }}
+            >
+              Nova conversa
+            </button>
+            <label className="text-xs inline-flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={onlyPinned}
+                onChange={(e) => setOnlyPinned(e.target.checked)}
+              />{" "}
+              Fixadas
+            </label>
+            <label className="text-xs inline-flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={onlyUnread}
+                onChange={(e) => setOnlyUnread(e.target.checked)}
+              />{" "}
+              Não lidas
+            </label>
+          </div>
         </div>
-        <div className="px-3 py-2 font-semibold">Grupos</div>
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200">
+          Grupos
+        </div>
         {filteredGroups.map((g) => (
           <button
             key={g.id}
             onClick={() => setActive(g)}
-            className={`px-3 py-2 hover:bg-slate-50 ${
-              active?.id === g.id ? "bg-blue-50 text-blue-700" : ""
-            } flex items-center justify-between`}
+            className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border ${
+              active?.id === g.id
+                ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
+                : "border-transparent hover:border-slate-200 dark:border-transparent dark:hover:border-slate-600"
+            } flex items-center justify-between transition-colors`}
           >
             <span className="truncate text-left">{g.name}</span>
             {g._unread > 0 && (
-              <span className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">
+              <span className="ml-2 min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
                 {g._unread}
               </span>
             )}
           </button>
         ))}
-        <div className="px-3 py-2 font-semibold border-t border-slate-200 mt-2">
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800">
           Pessoas
         </div>
-        <div className="px-3 py-2 flex flex-col gap-1">
+        <div id="people-list" className="px-3 py-2 flex flex-col gap-1">
           {filteredPeople.map((p) => {
             const dmInfo = dms.find((d) => d.other?.id === p.id);
             const unread = dmInfo?._unread || 0;
@@ -1364,16 +1506,38 @@ export default function Chat() {
                 })
               : "";
             const preview = dmInfo?._lastPreview || "";
+            const isSelected = !!(
+              active?.id &&
+              dmInfo?.groupId &&
+              active.id === dmInfo.groupId
+            );
             return (
               <button
                 key={p.id}
                 onClick={() => startConversation(p.id)}
-                className="hover:bg-slate-50 rounded px-2 py-2 flex items-center justify-between gap-2"
+                className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors ${
+                  isSelected
+                    ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
+                    : "hover:bg-slate-50 dark:hover:bg-slate-700/60 border-transparent hover:border-slate-200 dark:hover:border-slate-600"
+                }`}
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <Avatar url={p.avatarUrl} name={p.name} />
+                  <Avatar url={p.avatarUrl} name={p.name} size={40} />
                   <span className="flex flex-col items-start min-w-0">
-                    <span className="truncate font-medium">{p.name}</span>
+                    <span className="truncate font-medium text-sm">
+                      {p.name}
+                    </span>
+                    {p.status && (
+                      <span
+                        className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${
+                          String(p.status).toLowerCase() === "online"
+                            ? "bg-green-50 text-green-700 border-green-200"
+                            : "bg-slate-50 text-slate-600 border-slate-200"
+                        }`}
+                      >
+                        {p.status}
+                      </span>
+                    )}
                     {preview && (
                       <span className="truncate text-xs text-slate-500 max-w-[180px]">
                         {preview}
@@ -1388,7 +1552,7 @@ export default function Chat() {
                     </span>
                   )}
                   {unread > 0 && (
-                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] inline-flex items-center justify-center">
+                    <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
                       {unread}
                     </span>
                   )}
@@ -1400,8 +1564,8 @@ export default function Chat() {
       </div>
 
       {/* Conversation area */}
-      <div className="flex-1 flex flex-col">
-        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 backdrop-blur font-medium flex items-center gap-2">
+      <div className="flex-1 flex flex-col chat-bg">
+        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           <button
             type="button"
             className="md:hidden px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
@@ -1419,6 +1583,43 @@ export default function Chat() {
             {active?.name || "Selecione um grupo"}
           </button>
           <div className="ml-auto flex items-center gap-1">
+            {/* Notificações */}
+            <button
+              type="button"
+              title={notifOk ? "Notificações ativas" : "Ativar notificações"}
+              className={`px-2 py-1 rounded border ${
+                notifOk
+                  ? "border-green-300 text-green-700 hover:bg-green-50"
+                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={() => {
+                try {
+                  if (!("Notification" in window)) return;
+                  if (Notification.permission === "granted") {
+                    showToast?.("Notificações já ativas", "info");
+                    return;
+                  }
+                  Notification.requestPermission().then((p) => {
+                    setNotifOk(p === "granted");
+                  });
+                } catch {}
+              }}
+            >
+              🔔
+            </button>
+            {/* Som */}
+            <button
+              type="button"
+              title={soundOn ? "Som ligado" : "Som desligado"}
+              className={`px-2 py-1 rounded border ${
+                soundOn
+                  ? "border-blue-300 text-blue-700 hover:bg-blue-50"
+                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={toggleSound}
+            >
+              🔊
+            </button>
             {/* Mobile search toggle */}
             <button
               ref={mobileSearchToggleRef}
@@ -1474,7 +1675,7 @@ export default function Chat() {
                 <div className="flex items-center">
                   <button
                     type="button"
-                    className="px-1.5 py-1 rounded hover:bg-slate-100"
+                    className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                     title="Anterior"
                     onClick={() => jumpToMatch(false)}
                   >
@@ -1482,7 +1683,7 @@ export default function Chat() {
                   </button>
                   <button
                     type="button"
-                    className="px-1.5 py-1 rounded hover:bg-slate-100"
+                    className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                     title="Próximo"
                     onClick={() => jumpToMatch(true)}
                   >
@@ -1491,7 +1692,7 @@ export default function Chat() {
                   {searchQuery && (
                     <button
                       type="button"
-                      className="px-1.5 py-1 rounded hover:bg-slate-100"
+                      className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                       title="Limpar"
                       onClick={() => setSearchQuery("")}
                     >
@@ -1503,6 +1704,28 @@ export default function Chat() {
             )}
           </div>
         </div>
+        {!active && (
+          <div className="flex-1 grid place-items-center p-6">
+            <div className="text-center text-slate-600 dark:text-slate-300">
+              <div className="mx-auto w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700 grid place-items-center mb-3 shadow">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-8 h-8 text-slate-400 dark:text-slate-300"
+                >
+                  <path d="M19.5 6.75v10.5A2.25 2.25 0 0 1 17.25 19.5H6.75A2.25 2.25 0 0 1 4.5 17.25V6.75A2.25 2.25 0 0 1 6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75ZM8.25 9A.75.75 0 0 0 7.5 9.75v6a.75.75 0 0 0 1.5 0v-6A.75.75 0 0 0 8.25 9Zm4.5 0a.75.75 0 0 0-.75.75v6a.75.75 0 0 0 1.5 0v-6A.75.75 0 0 0 12.75 9Zm4.5.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 1.5 0Z" />
+                </svg>
+              </div>
+              <div className="text-lg font-semibold">
+                Selecione uma conversa
+              </div>
+              <div className="text-sm">
+                Escolha um grupo ou contato à esquerda.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mobile search bar */}
         {mobileSearchShown && (
@@ -1535,7 +1758,7 @@ export default function Chat() {
             </span>
             <button
               type="button"
-              className="px-1.5 py-1 rounded hover:bg-slate-100"
+              className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
               title="Anterior"
               onClick={() => jumpToMatch(false)}
             >
@@ -1543,7 +1766,7 @@ export default function Chat() {
             </button>
             <button
               type="button"
-              className="px-1.5 py-1 rounded hover:bg-slate-100"
+              className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
               title="Próximo"
               onClick={() => jumpToMatch(true)}
             >
@@ -1552,7 +1775,7 @@ export default function Chat() {
             {searchQuery && (
               <button
                 type="button"
-                className="px-1.5 py-1 rounded hover:bg-slate-100"
+                className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                 title="Limpar"
                 onClick={() => setSearchQuery("")}
               >
@@ -1892,7 +2115,12 @@ export default function Chat() {
           </>
         )}
 
-        <div ref={listRef} className="flex-1 overflow-auto p-4 space-y-3">
+        <div
+          ref={listRef}
+          className={`flex-1 overflow-auto p-4 space-y-3 ${
+            !active ? "hidden" : ""
+          }`}
+        >
           {messages.map((m, i) => {
             const mine = (m.author?.id || m.authorId) === user?.id;
             const bubbleClass = mine
@@ -1926,7 +2154,11 @@ export default function Chat() {
                 <div className={`${lineClass} group`}>
                   {!mine && (
                     <div className="mr-2">
-                      <Avatar url={m.author?.avatarUrl} name={m.author?.name} />
+                      <Avatar
+                        url={m.author?.avatarUrl}
+                        name={m.author?.name}
+                        size={32}
+                      />
                     </div>
                   )}
                   <div
@@ -2093,13 +2325,15 @@ export default function Chat() {
 
         <form
           onSubmit={sendMessage}
-          className="flex gap-2 p-2 border-t border-slate-200 items-center relative"
+          className={`flex gap-2 p-2 border-t border-slate-200 items-center relative bg-white/80 dark:bg-slate-900/60 backdrop-blur ${
+            !active ? "hidden" : ""
+          }`}
         >
           <button
             type="button"
             onClick={() => setShowEmoji((v) => !v)}
             title="Emojis"
-            className="px-2 py-1 rounded hover:bg-slate-100"
+            className="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
             aria-label="Emojis"
           >
             😊
@@ -2108,7 +2342,7 @@ export default function Chat() {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             title="Anexar"
-            className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100"
+            className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
             aria-label="Anexar"
           >
             📎
@@ -2121,7 +2355,7 @@ export default function Chat() {
             className="hidden"
           />
           {file && (
-            <div className="max-w-[45%] truncate text-xs text-slate-700 bg-slate-100 rounded px-2 py-1 flex items-center gap-2">
+            <div className="max-w-[45%] truncate text-xs text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700/60 rounded px-2 py-1 flex items-center gap-2">
               <span className="truncate" title={file.name}>
                 {file.name}
               </span>
@@ -2139,7 +2373,7 @@ export default function Chat() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Mensagem (suporta URL .gif/.jpg etc.)"
-            className="flex-1 border rounded px-3 py-2"
+            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
           />
           <button
             type="button"
@@ -2152,10 +2386,10 @@ export default function Chat() {
             }}
             className={`${
               (text || "").trim() || file
-                ? "bg-blue-600 text-white hover:bg-blue-700"
+                ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
                 : recording
-                ? "bg-red-600 text-white hover:bg-red-700"
-                : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                ? "bg-red-600 text-white hover:bg-red-700 shadow"
+                : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
             } inline-flex items-center justify-center rounded-full w-10 h-10`}
             title={
               (text || "").trim() || file
@@ -2212,7 +2446,7 @@ export default function Chat() {
                     key={e}
                     type="button"
                     onClick={() => insertEmoji(e)}
-                    className="text-xl leading-6 hover:bg-slate-100 rounded px-1"
+                    className="text-xl leading-6 hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1"
                   >
                     {e}
                   </button>
@@ -2226,8 +2460,7 @@ export default function Chat() {
   );
 }
 
-function Avatar({ url, name }) {
-  const size = 28;
+function Avatar({ url, name, size = 28 }) {
   const style = {
     width: size,
     height: size,

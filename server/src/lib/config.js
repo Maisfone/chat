@@ -31,6 +31,5 @@ export function updateConfig(patch) {
 
 export function publicConfig() {
   const cfg = readConfig()
-  return { chatIconUrl: cfg.chatIconUrl || null }
+  return { chatIconUrl: cfg.chatIconUrl || null, chatWallpaperUrl: cfg.chatWallpaperUrl || null }
 }
-

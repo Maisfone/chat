@@ -56,3 +56,9 @@ createRoot(document.getElementById("root")).render(
     </BrowserRouter>
   </React.StrictMode>
 );
+// Register Service Worker for Web Push
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    try { navigator.serviceWorker.register('/sw.js') } catch {}
+  })
+}

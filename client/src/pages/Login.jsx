@@ -58,7 +58,9 @@ export default function Login() {
         noValidate
       >
         <h2 className="text-xl font-semibold">Entrar</h2>
-        <label className="text-sm text-slate-700 dark:text-slate-200">E-mail</label>
+        <label className="text-sm text-slate-700 dark:text-slate-200">
+          E-mail
+        </label>
         <input
           className="border rounded px-3 py-2 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
           placeholder="voce@empresa.com"
@@ -68,10 +70,12 @@ export default function Login() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <label className="text-sm text-slate-700 dark:text-slate-200 mt-2">Senha</label>
+        <label className="text-sm text-slate-700 dark:text-slate-200 mt-2">
+          Senha
+        </label>
         <input
           className="border rounded px-3 py-2 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
-          placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+          placeholder="sua senha"
           type="password"
           autoComplete="current-password"
           minLength={8}
@@ -98,7 +102,7 @@ export default function Login() {
           {loading ? "Entrando..." : "Entrar"}
         </button>
         <div className="text-xs text-slate-600 dark:text-slate-400 mt-2">
-          NÃ£o tem conta?{" "}
+          Não tem conta?{" "}
           <Link
             className="text-blue-500 dark:text-blue-400 hover:underline"
             to="/register"
@@ -110,5 +114,3 @@ export default function Login() {
     </div>
   );
 }
-
-

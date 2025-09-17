@@ -58,6 +58,11 @@ export default function Admin() {
   const [cfgIcon, setCfgIcon] = useState('')
   const [cfgUrl, setCfgUrl] = useState('')
   const [globalIconUrl, setGlobalIconUrl] = useState('')
+  const [globalWallpaperUrl, setGlobalWallpaperUrl] = useState('')
+  // Admin > Configurações (papel de parede das Conversas)
+  const [cfgBg, setCfgBg] = useState(() => {
+    try { return localStorage.getItem('chat_bg') || 'default' } catch { return 'default' }
+  })
   // Admin > Configurações (senha do admin)
   const [admCurrentPwd, setAdmCurrentPwd] = useState('')
   const [admNewPwd, setAdmNewPwd] = useState('')
@@ -68,7 +73,7 @@ export default function Admin() {
       if (saved) { setCfgIcon(saved.startsWith('data:') ? saved : ''); setCfgUrl(saved.startsWith('data:') ? '' : saved) }
     } catch {}
     // Carrega ícone global do servidor
-    (async () => { try { const pub = await (await fetch((import.meta.env.VITE_API_URL || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/public')).json(); if (pub?.chatIconUrl) setGlobalIconUrl(pub.chatIconUrl) } catch {} })()
+    (async () => { try { const pub = await (await fetch((import.meta.env.VITE_API_URL || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/public')).json(); if (pub?.chatIconUrl) setGlobalIconUrl(pub.chatIconUrl); if (pub?.chatWallpaperUrl) setGlobalWallpaperUrl(pub.chatWallpaperUrl) } catch {} })()
   }, [])
   function onCfgFile(e){
     const f = e.target.files?.[0]; if (!f) return
@@ -84,6 +89,12 @@ export default function Admin() {
       if (!val) { showToast('Defina uma imagem ou URL', 'error'); return }
       localStorage.setItem('chat_icon', val)
       try { window.dispatchEvent(new Event('chat:iconUpdated')) } catch {}
+      // Salva papel de parede das conversas
+      try {
+        localStorage.setItem('chat_bg', cfgBg || 'default')
+        document.body?.setAttribute?.('data-chat-bg', cfgBg || 'default')
+        window.dispatchEvent(new Event('chat:bgUpdated'))
+      } catch {}
       showToast('Configurações salvas', 'success')
     } catch { showToast('Falha ao salvar configurações', 'error') }
   }
@@ -97,6 +108,44 @@ export default function Admin() {
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json(); if (data?.chatIconUrl) { setGlobalIconUrl(data.chatIconUrl); showToast('Ícone global atualizado', 'success'); try { localStorage.setItem('chat_icon', data.chatIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')) } catch {} }
     } catch(e){ showToast(e.message||'Falha ao enviar ícone', 'error') }
+  }
+
+  async function uploadGlobalWallpaper(file){
+    if (!file) return
+    const form = new FormData()
+    form.append('wallpaper', file)
+    try {
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
+      if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
+      const data = await res.json(); if (data?.chatWallpaperUrl) { setGlobalWallpaperUrl(data.chatWallpaperUrl); document.documentElement.style.setProperty('--chat-wallpaper', `url('${data.chatWallpaperUrl}')`); try { localStorage.setItem('chat_wallpaper', data.chatWallpaperUrl); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {} ; showToast('Papel de parede global atualizado', 'success') }
+    } catch(e){ showToast(e.message||'Falha ao enviar papel de parede', 'error') }
+  }
+  async function saveGlobalWallpaper(){
+    try {
+      if (!globalWallpaperUrl) { showToast('Nenhum papel de parede para salvar', 'error'); return }
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config', {
+        method:'PATCH',
+        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+        body: JSON.stringify({ chatWallpaperUrl: globalWallpaperUrl })
+      })
+      if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao salvar') }
+      showToast('Papel de parede salvo para todos', 'success')
+    } catch(e){ showToast(e.message||'Falha ao salvar papel de parede', 'error') }
+  }
+  async function deleteGlobalWallpaper(){
+    try {
+      const ok = typeof window!=='undefined' ? window.confirm('Excluir papel de parede global?') : true
+      if (!ok) return
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', {
+        method:'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+      })
+      if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao excluir') }
+      setGlobalWallpaperUrl('')
+      // Limpa aplicação local caso estivesse usando o global
+      try { localStorage.removeItem('chat_wallpaper'); document.documentElement.style.removeProperty('--chat-wallpaper'); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {}
+      showToast('Papel de parede global excluído', 'success')
+    } catch(e){ showToast(e.message||'Falha ao excluir papel de parede', 'error') }
   }
 
   async function changeAdminPassword(e){
@@ -596,56 +645,90 @@ export default function Admin() {
       )}
 
       {tab==='configuracoes' && (
-        <section className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-          <form onSubmit={saveCfg} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2">
-            <h4 className="font-medium">Aparência</h4>
-            <label className="text-sm text-slate-700">Ícone do chat</label>
-            <div className="flex items-center gap-2">
-              <input ref={el=>window.__cfgFileRef=el} id="cfg-file" className="hidden" type="file" accept="image/*" onChange={onCfgFile} />
-              <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file')?.click()}>Escolher imagem</button>
-              {(cfgIcon||cfgUrl) && <button type="button" className="px-3 py-2 rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Remover</button>}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <section className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+          {/* Global (para todos) */}
+          <div className="bg-white p-4 rounded border border-slate-200 lg:col-span-2">
+            <h3 className="text-lg font-semibold">Chat da organização (Global)</h3>
+            <div className="mt-3 grid md:grid-cols-2 gap-4">
+              {/* Ícone global */}
               <div>
-                <div className="text-xs text-slate-500">Preview</div>
-                { (cfgIcon || cfgUrl) ? (
-                  <img src={cfgIcon || cfgUrl} alt="ícone" className="mt-1 w-12 h-12 rounded-full object-cover border" />
-                ) : (
-                  <div className="mt-1 w-12 h-12 rounded-full border bg-slate-100" />
-                )}
+                <h4 className="font-medium">Ícone do chat</h4>
+                <div className="mt-2 flex items-center gap-3">
+                  {globalIconUrl ? (
+                    <img src={globalIconUrl} alt="global" className="w-12 h-12 rounded-full object-cover border" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full border bg-slate-100" />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input id="cfg-file-global" className="hidden" type="file" accept="image/*" onChange={e=>uploadGlobalIcon(e.target.files?.[0])} />
+                    <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file-global')?.click()}>Enviar</button>
+                    {globalIconUrl && <button type="button" className="px-3 py-2 rounded border border-blue-300 text-blue-700 hover:bg-blue-50" onClick={()=>{ try{ localStorage.setItem('chat_icon', globalIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')); showToast('Aplicado ícone global neste navegador', 'success') } catch{} }}>Aplicar local</button>}
+                  </div>
+                </div>
               </div>
+              {/* Wallpaper global */}
               <div>
-                <div className="text-xs text-slate-500">URL (opcional)</div>
-                <input className="border rounded px-3 py-2 w-full" placeholder="https://..." value={cfgUrl} onChange={e=>{ setCfgUrl(e.target.value); if (e.target.value) setCfgIcon('') }} />
-              </div>
-            </div>
-            <div className="flex items-center gap-2 justify-end">
-              <button type="button" className="px-3 py-2 rounded border" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Limpar</button>
-              <button type="submit" className="px-3 py-2 rounded bg-blue-600 text-white">Salvar</button>
-            </div>
-          </form>
-          <div className="bg-white p-4 rounded border border-slate-200 text-sm text-slate-600">
-            <h4 className="font-medium text-slate-900">Sobre as Configurações</h4>
-            <p className="mt-2">Estas configurações são salvas no navegador (localStorage) e afetam apenas esta instância/usuário. Para definir o ícone globalmente para todos, podemos evoluir para salvar no servidor.</p>
-          </div>
-          <div className="bg-white p-4 rounded border border-slate-200 md:col-span-2">
-            <h4 className="font-medium">Ícone Global (servidor)</h4>
-            <div className="mt-2 flex items-center gap-3">
-              {globalIconUrl ? (
-                <img src={globalIconUrl} alt="global" className="w-12 h-12 rounded-full object-cover border" />
-              ) : (
-                <div className="w-12 h-12 rounded-full border bg-slate-100" />
-              )}
-              <div className="flex items-center gap-2">
-                <input id="cfg-file-global" className="hidden" type="file" accept="image/*" onChange={e=>uploadGlobalIcon(e.target.files?.[0])} />
-                <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file-global')?.click()}>Enviar e definir global</button>
-                {globalIconUrl && <button type="button" className="px-3 py-2 rounded border border-blue-300 text-blue-700 hover:bg-blue-50" onClick={()=>{ try{ localStorage.setItem('chat_icon', globalIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')); showToast('Aplicado ícone global neste navegador', 'success') } catch{} }}>Usar este ícone</button>}
+                <h4 className="font-medium">Papel de parede (conversas)</h4>
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="w-28 h-16 rounded border bg-slate-100 overflow-hidden">
+                    <div className="w-full h-full chat-bg" style={{ ['--chat-wallpaper']: globalWallpaperUrl ? `url('${globalWallpaperUrl}')` : undefined }}></div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input id="cfg-file-wallpaper" className="hidden" type="file" accept="image/*" onChange={e=>uploadGlobalWallpaper(e.target.files?.[0])} />
+                    <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file-wallpaper')?.click()}>Enviar</button>
+                    <button type="button" className="px-3 py-2 rounded border border-green-300 text-green-700 hover:bg-green-50" onClick={saveGlobalWallpaper} disabled={!globalWallpaperUrl}>Salvar</button>
+                    <button type="button" className="px-3 py-2 rounded border border-blue-300 text-blue-700 hover:bg-blue-50" onClick={()=>{ try{ if(!globalWallpaperUrl){ showToast('Nenhum wallpaper para aplicar', 'error'); return } localStorage.setItem('chat_wallpaper', globalWallpaperUrl); document.documentElement.style.setProperty('--chat-wallpaper', `url('${globalWallpaperUrl}')`); window.dispatchEvent(new Event('chat:wallpaperUpdated')); showToast('Aplicado localmente', 'success') } catch{} }} disabled={!globalWallpaperUrl}>Aplicar local</button>
+                    <button type="button" className="px-3 py-2 rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={deleteGlobalWallpaper} disabled={!globalWallpaperUrl}>Excluir</button>
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-slate-500">Afeta todos os usuários. A aplicação local funciona apenas neste navegador.</div>
               </div>
             </div>
           </div>
-          <form onSubmit={changeAdminPassword} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2 md:col-span-2">
-            <h4 className="font-medium">Alterar senha do administrador</h4>
-            <div className="grid md:grid-cols-3 gap-2">
+
+          {/* Preferências do seu navegador */}
+          <div className="bg-white p-4 rounded border border-slate-200">
+            <h3 className="text-lg font-semibold">Aparência Local</h3>
+            <form onSubmit={saveCfg} className="mt-2 flex flex-col gap-3">
+              <div>
+                <label className="text-sm text-slate-700">Ícone local</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input id="cfg-file" className="hidden" type="file" accept="image/*" onChange={onCfgFile} />
+                  <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file')?.click()}>Escolher</button>
+                  {(cfgIcon||cfgUrl) && <button type="button" className="px-3 py-2 rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Limpar</button>}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 items-center">
+                  <div>
+                    <div className="text-xs text-slate-500">Preview</div>
+                    { (cfgIcon || cfgUrl) ? (
+                      <img src={cfgIcon || cfgUrl} alt="ícone" className="mt-1 w-10 h-10 rounded-full object-cover border" />
+                    ) : (
+                      <div className="mt-1 w-10 h-10 rounded-full border bg-slate-100" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">URL (opcional)</div>
+                    <input className="border rounded px-3 py-2 w-full" placeholder="https://..." value={cfgUrl} onChange={e=>{ setCfgUrl(e.target.value); if (e.target.value) setCfgIcon('') }} />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-slate-700">Tema do papel de parede</label>
+                <select className="mt-1 border rounded px-3 py-2 w-full" value={cfgBg} onChange={e=>setCfgBg(e.target.value)}>
+                  <option value="default">Padrão</option>
+                  <option value="whatsapp">WhatsApp</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button type="submit" className="px-3 py-2 rounded bg-blue-600 text-white">Salvar local</button>
+              </div>
+            </form>
+          </div>
+
+          {/* Segurança */}
+          <form onSubmit={changeAdminPassword} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2 lg:col-span-3">
+            <h3 className="text-lg font-semibold">Conta do administrador</h3>
+            <div className="grid md:grid-cols-3 gap-2 mt-2">
               <input className="border rounded px-3 py-2" placeholder="Senha atual" type="password" value={admCurrentPwd} onChange={e=>setAdmCurrentPwd(e.target.value)} />
               <input className="border rounded px-3 py-2" placeholder="Nova senha (6+)" type="password" value={admNewPwd} onChange={e=>setAdmNewPwd(e.target.value)} />
               <input className="border rounded px-3 py-2" placeholder="Confirmar nova senha" type="password" value={admNewPwd2} onChange={e=>setAdmNewPwd2(e.target.value)} />

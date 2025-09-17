@@ -13,6 +13,7 @@ import dmRoutes from "./routes/dm.js";
 import phoneRoutes from "./routes/phone.js";
 import meetingRoutes from "./routes/meetings.js";
 import configRoutes from "./routes/config.js";
+import pushRoutes from "./routes/push.js";
 
 dotenv.config();
 
@@ -57,6 +58,7 @@ app.use("/api/dm", dmRoutes);
 app.use("/api/phone", phoneRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/admin/config", configRoutes);
+app.use("/api/push", pushRoutes);
 
 // Socket rooms
 io.on("connection", (socket) => {

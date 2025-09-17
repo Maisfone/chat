@@ -3,6 +3,7 @@ import { handleUploadSingle } from '../lib/storage.js'
 import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { authRequired } from '../middleware/auth.js'
+import { sendToUsers } from '../lib/push.js'
 
 const router = express.Router()
 router.use(authRequired)
@@ -80,6 +81,12 @@ router.post('/:groupId', async (req, res) => {
       }
     })
     req.io.to(groupId).emit('message:new', msg)
+    // Push para membros (exclui autor)
+    try {
+      const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
+      const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
+      await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body: msg.type==='text'? msg.content : (msg.type==='image'?'Imagem': msg.type==='audio'?'Áudio':'Anexo'), tag: `group:${groupId}`, data: { groupId } })
+    } catch {}
     res.status(201).json(msg)
   } catch (e) {
     res.status(400).json({ error: 'Dados inválidos' })
@@ -104,6 +111,11 @@ router.post('/:groupId/upload', upload, async (req, res) => {
     }
   })
   req.io.to(groupId).emit('message:new', msg)
+  try {
+    const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
+    const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
+    await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body: kind==='image'?'Imagem':'Áudio', tag: `group:${groupId}`, data: { groupId } })
+  } catch {}
   res.status(201).json(msg)
 })
 

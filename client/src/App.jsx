@@ -9,10 +9,36 @@ export default function App() {
   const loc = useLocation()
   const user = getUser()
   const [userTick, setUserTick] = useState(0)
-  useEffect(() => {
+  useEffect(() => { 
     const onUserUpdated = () => setUserTick(t => t + 1)
     window.addEventListener('chat:userUpdated', onUserUpdated)
     return () => window.removeEventListener('chat:userUpdated', onUserUpdated)
+  }, []) 
+  // Wallpaper: sync CSS variable and load from server if absent
+  useEffect(() => {
+    const onWallpaper = () => {
+      const w = localStorage.getItem('chat_wallpaper') || ''
+      if (w) document.documentElement.style.setProperty('--chat-wallpaper', `url('${w}')`)
+      else document.documentElement.style.removeProperty('--chat-wallpaper')
+    }
+    window.addEventListener('chat:wallpaperUpdated', onWallpaper)
+    ;(async () => {
+      try {
+        const w = localStorage.getItem('chat_wallpaper') || ''
+        if (!w) {
+          const res = await fetch((import.meta.env.VITE_API_URL || `${window.location.origin}/api`) + '/admin/config/public')
+          if (res.ok) {
+            const pub = await res.json()
+            if (pub?.chatWallpaperUrl) {
+              document.documentElement.style.setProperty('--chat-wallpaper', `url('${pub.chatWallpaperUrl}')`)
+            }
+          }
+        } else {
+          document.documentElement.style.setProperty('--chat-wallpaper', `url('${w}')`)
+        }
+      } catch {}
+    })()
+    return () => window.removeEventListener('chat:wallpaperUpdated', onWallpaper)
   }, [])
   // Initialize background SIP registration (keeps your extension online)
   useEffect(() => {
@@ -41,7 +67,9 @@ export default function App() {
   }, [chatBg])
   useEffect(() => {
     const onIcon = () => setChatIcon(localStorage.getItem('chat_icon') || '')
+    const onBg = () => setChatBg(localStorage.getItem('chat_bg') || 'whatsapp')
     window.addEventListener('chat:iconUpdated', onIcon)
+    window.addEventListener('chat:bgUpdated', onBg)
     ;(async () => {
       try {
         // Se não houver ícone local, tenta usar o global do servidor
@@ -57,7 +85,7 @@ export default function App() {
         }
       } catch {}
     })()
-    return () => window.removeEventListener('chat:iconUpdated', onIcon)
+    return () => { window.removeEventListener('chat:iconUpdated', onIcon); window.removeEventListener('chat:bgUpdated', onBg) }
   }, [])
   const isActive = (path) => (loc.pathname === path ? 'text-blue-600 font-semibold' : 'text-slate-700 hover:text-blue-600')
   return (
@@ -246,7 +274,7 @@ export default function App() {
           </button>
         </div>
       </aside>
-      <main className="flex-1 overflow-hidden chat-bg">
+      <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
     </div>
