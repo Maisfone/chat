@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { api, absUrl } from "../services/api.js";
 import { ioClient } from "../services/socket.js";
 import { getUser } from "../state/auth.js";
@@ -125,6 +131,16 @@ export default function Chat() {
   );
   const audioCtxRef = useRef(null);
   const customBufferRef = useRef({ url: "", buffer: null });
+  const [windowFocused, setWindowFocused] = useState(() => {
+    try {
+      return !document.hidden && document.hasFocus();
+    } catch {
+      return true;
+    }
+  });
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+  const toastTimeouts = useRef(new Map());
   const [soundOn, setSoundOn] = useState(() => {
     try {
       return localStorage.getItem("chat_sound") !== "0";
@@ -139,6 +155,106 @@ export default function Chat() {
       localStorage.setItem("chat_sound", next ? "1" : "0");
     } catch {}
   }
+  const enqueueToast = useCallback((payload) => {
+    let createdId = "";
+    setToasts((prev) => {
+      if (
+        payload.messageId &&
+        prev.some((t) => t.messageId === payload.messageId)
+      ) {
+        createdId = "";
+        return prev;
+      }
+      const id = "toast-" + (toastIdRef.current + 1);
+      toastIdRef.current += 1;
+      createdId = id;
+      return [...prev, { ...payload, id }];
+    });
+    if (createdId) {
+      const timeout = setTimeout(() => {
+        setToasts((curr) => curr.filter((t) => t.id !== createdId));
+        toastTimeouts.current.delete(createdId);
+      }, payload.duration || 6000);
+      toastTimeouts.current.set(createdId, timeout);
+    }
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const timeout = toastTimeouts.current.get(id);
+    if (timeout) {
+      clearTimeout(timeout);
+      toastTimeouts.current.delete(id);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      toastTimeouts.current.forEach((timeout) => clearTimeout(timeout));
+      toastTimeouts.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateFocus = () => {
+      try {
+        setWindowFocused(!document.hidden && document.hasFocus());
+      } catch {
+        setWindowFocused(true);
+      }
+    };
+    updateFocus();
+    window.addEventListener("focus", updateFocus);
+    window.addEventListener("blur", updateFocus);
+    document.addEventListener("visibilitychange", updateFocus);
+    return () => {
+      window.removeEventListener("focus", updateFocus);
+      window.removeEventListener("blur", updateFocus);
+      document.removeEventListener("visibilitychange", updateFocus);
+    };
+  }, []);
+  const handleToastClick = useCallback((toast) => {
+    dismissToast(toast.id);
+    if (toast.groupId) {
+      const group = groups.find((g) => g.id === toast.groupId);
+      if (group) {
+        setActive(group);
+        try {
+          window.focus?.();
+        } catch {}
+        return;
+      }
+      const dm = dms.find((d) => d.groupId === toast.groupId);
+      if (dm) {
+        setActive({ id: dm.groupId, name: dm.other?.name || toast.title || "Direto" });
+        try {
+          window.focus?.();
+        } catch {}
+        return;
+      }
+      setActive({ id: toast.groupId, name: toast.groupName || toast.title || "Direto" });
+      try {
+        window.focus?.();
+      } catch {}
+    }
+  }, [dismissToast, groups, dms]);
+
+  useEffect(() => {
+    const onSoundUpdated = () => {
+      try {
+        const url = localStorage.getItem("notif_sound_url") || "";
+        if (!url) {
+          customBufferRef.current = { url: "", buffer: null };
+        } else if (customBufferRef.current.url !== url) {
+          customBufferRef.current = { url, buffer: null };
+        }
+      } catch {}
+    };
+    onSoundUpdated();
+    window.addEventListener("chat:alertSoundUpdated", onSoundUpdated);
+    return () =>
+      window.removeEventListener("chat:alertSoundUpdated", onSoundUpdated);
+  }, []);
 
   useEffect(() => {
     try {
@@ -213,10 +329,10 @@ export default function Chat() {
           src.buffer = customBufferRef.current.buffer;
           const g = ctx.createGain();
           g.gain.setValueAtTime(0.0001, ctx.currentTime);
-          g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.01);
           g.gain.exponentialRampToValueAtTime(
             0.0001,
-            ctx.currentTime + Math.min(0.8, src.buffer.duration)
+            ctx.currentTime + Math.min(1.2, src.buffer.duration)
           );
           src.connect(g).connect(ctx.destination);
           src.start();
@@ -229,11 +345,11 @@ export default function Chat() {
       o.type = "sine";
       o.frequency.value = 880;
       g.gain.setValueAtTime(0.0001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
       o.connect(g).connect(ctx.destination);
       o.start();
-      o.stop(ctx.currentTime + 0.31);
+      o.stop(ctx.currentTime + 0.5);
     } catch {}
   }
 
@@ -668,6 +784,25 @@ export default function Chat() {
         const mine = (msg.author?.id || msg.authorId) === user?.id;
         const isActive = msg.groupId === active.id;
         const isMuted = !!muted?.[msg.groupId];
+        const shouldToast = (() => {
+          try {
+            return (!windowFocused || document.hidden) && !mine;
+          } catch {
+            return !windowFocused && !mine;
+          }
+        })();
+        if (shouldToast) {
+          enqueueToast({
+            title: msg.author?.name || 'Nova mensagem',
+            body: previewFromMessage(msg) || '',
+            groupId: msg.groupId,
+            groupName: msg.group?.name || undefined,
+            messageId: msg.id,
+          });
+          try {
+            showNotificationFor(msg);
+          } catch {}
+        }
         if (isActive) {
           setMessages((prev) => {
             if ((prev || []).some((m) => m.id === msg.id)) return prev;
@@ -696,13 +831,13 @@ export default function Chat() {
                     ...d,
                     _lastAt: ts,
                     _lastPreview:
-                      msg.type === 'text'
+                      msg.type === "text"
                         ? msg.content
-                        : msg.type === 'image' || msg.type === 'gif'
-                        ? 'Imagem'
-                        : msg.type === 'audio'
-                        ? 'Áudio'
-                        : 'Anexo',
+                        : msg.type === "image" || msg.type === "gif"
+                        ? "Imagem"
+                        : msg.type === "audio"
+                        ? "Áudio"
+                        : "Anexo",
                   }
                 : d
             )
@@ -727,24 +862,19 @@ export default function Chat() {
                     _unread: (d._unread || 0) + 1,
                     _lastAt: ts,
                     _lastPreview:
-                      msg.type === 'text'
+                      msg.type === "text"
                         ? msg.content
-                        : msg.type === 'image' || msg.type === 'gif'
-                        ? 'Imagem'
-                        : msg.type === 'audio'
-                        ? 'Áudio'
-                        : 'Anexo',
+                        : msg.type === "image" || msg.type === "gif"
+                        ? "Imagem"
+                        : msg.type === "audio"
+                        ? "Áudio"
+                        : "Anexo",
                   }
                 : d
             )
           );
           try {
             if (!mine && !isMuted) playPing();
-          } catch {}
-        }
-        if (document.hidden && !mine && !isActive) {
-          try {
-            showNotificationFor(msg);
           } catch {}
         }
       };
@@ -1243,7 +1373,69 @@ export default function Chat() {
 
   return (
     <div className="relative flex h-full">
-      {leftOpen && (
+      {toasts.length > 0 && (
+        <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-3">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="pointer-events-auto w-72 max-w-[90vw] rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-800"
+              role="status"
+              aria-live="assertive"
+            >
+              <div className="flex gap-3 px-4 py-3">
+                <div
+                  className="flex-1 cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleToastClick(toast)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleToastClick(toast);
+                    }
+                  }}
+                >
+                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {toast.title || "Nova mensagem"}
+                  </div>
+                  {toast.body && (
+                    <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                      {toast.body}
+                    </div>
+                  )}
+                  {toast.groupName && (
+                    <div className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                      {toast.groupName}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-label="Fechar notificação"
+                  className="text-slate-400 transition hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-200"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dismissToast(toast.id);
+                  }}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M5.22 5.22a.75.75 0 0 1 1.06 0L10 8.94l3.72-3.72a.75.75 0 1 1 1.06 1.06L11.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 0 1-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 0 1 0-1.06Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}      {leftOpen && (
         <>
           <div
             className="absolute inset-0 bg-black/20 z-10"
@@ -2372,8 +2564,8 @@ export default function Chat() {
             ref={inputRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Mensagem (suporta URL .gif/.jpg etc.)"
-            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
+            placeholder="Digite sua mensagem..."
+            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-6 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
           />
           <button
             type="button"
@@ -2488,3 +2680,4 @@ function Avatar({ url, name, size = 28 }) {
 }
 
 // Helpers for right sidebar (defined after component and hoisted above via closures)
+

@@ -5,18 +5,14 @@ import { publicConfig, readConfig, updateConfig } from '../lib/config.js'
 
 const router = express.Router()
 
-// Público: retorna configurações públicas
+// Public config (no auth)
 router.get('/public', (req, res) => {
   res.json(publicConfig())
 })
 
 router.use(authRequired)
 
-// Admin: obter config completa
-router.get('/', adminRequired, (req, res) => {
-  res.json(readConfig())
-})
-
+// Helpers
 function pickString(value) {
   if (value === undefined || value === null) return null
   if (typeof value === 'string') {
@@ -26,8 +22,27 @@ function pickString(value) {
   return null
 }
 
+function currentAlertSound(cfg) {
+  if (!cfg || !Array.isArray(cfg.alertSounds)) return null
+  return cfg.alertSounds.find((item) => item?.id === cfg.activeAlertSoundId) || null
+}
 
-// Admin: atualizar campos simples
+function broadcastAlertSound(req, cfg) {
+  try {
+    const active = currentAlertSound(cfg)
+    req.io?.emit?.('config:alert-sound', {
+      id: active?.id || null,
+      url: active?.url || null,
+    })
+  } catch {}
+}
+
+// Admin: full config
+router.get('/', adminRequired, (req, res) => {
+  res.json(readConfig())
+})
+
+// Admin: patch simple fields
 router.patch('/', adminRequired, (req, res) => {
   const current = readConfig()
   const patch = {}
@@ -35,18 +50,19 @@ router.patch('/', adminRequired, (req, res) => {
   if ('chatWallpaperUrl' in req.body) patch.chatWallpaperUrl = req.body.chatWallpaperUrl || null
   if ('activeAlertSoundId' in req.body) {
     const id = pickString(req.body.activeAlertSoundId)
-    if (id && !current.alertSounds.some((item) => item.id === id)) {
+    if (id && !current.alertSounds?.some((item) => item?.id === id)) {
       return res.status(400).json({ error: 'Som de alerta não encontrado' })
     }
     patch.activeAlertSoundId = id || null
   }
   const cfg = updateConfig(patch)
+  broadcastAlertSound(req, cfg)
   res.json(cfg)
 })
 
-// Admin: upload do ícone e já persiste URL
-const upload = handleUploadSingle('icon')
-router.post('/icon', adminRequired, upload, (req, res) => {
+// Admin: upload icon and persist URL
+const uploadIcon = handleUploadSingle('icon')
+router.post('/icon', adminRequired, uploadIcon, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
     const cfg = updateConfig({ chatIconUrl: req.file.url })
@@ -56,7 +72,7 @@ router.post('/icon', adminRequired, upload, (req, res) => {
   }
 })
 
-// Admin: upload do papel de parede (conversas) e já persiste URL
+// Admin: upload wallpaper and persist URL
 const uploadWallpaper = handleUploadSingle('wallpaper')
 router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
   try {
@@ -68,7 +84,7 @@ router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
   }
 })
 
-// Admin: excluir papel de parede global
+// Admin: delete global wallpaper
 router.delete('/wallpaper', adminRequired, (req, res) => {
   try {
     const cfg = updateConfig({ chatWallpaperUrl: null })
@@ -99,6 +115,7 @@ router.post('/alert-sounds', adminRequired, uploadSound, (req, res) => {
     const patch = { alertSounds: list }
     if (!cfg.activeAlertSoundId) patch.activeAlertSoundId = entry.id
     const updated = updateConfig(patch)
+    broadcastAlertSound(req, updated)
     res.json({
       ok: true,
       alertSounds: updated.alertSounds,
@@ -115,14 +132,15 @@ router.delete('/alert-sounds/:id', adminRequired, (req, res) => {
     if (!id) return res.status(400).json({ error: 'ID ausente' })
     const cfg = readConfig()
     const list = Array.isArray(cfg.alertSounds) ? [...cfg.alertSounds] : []
-    const exists = list.find((item) => item.id === id)
+    const exists = list.find((item) => item?.id === id)
     if (!exists) return res.status(404).json({ error: 'Som de alerta não encontrado' })
-    const filtered = list.filter((item) => item.id !== id)
+    const filtered = list.filter((item) => item?.id !== id)
     const patch = { alertSounds: filtered }
     if (cfg.activeAlertSoundId === id) {
       patch.activeAlertSoundId = filtered[0]?.id || null
     }
     const updated = updateConfig(patch)
+    broadcastAlertSound(req, updated)
     res.json({
       ok: true,
       alertSounds: updated.alertSounds,
@@ -139,16 +157,18 @@ router.post('/alert-sounds/:id/activate', adminRequired, (req, res) => {
     const cfg = readConfig()
     if (!id || id === 'none') {
       const updated = updateConfig({ activeAlertSoundId: null })
+      broadcastAlertSound(req, updated)
       return res.json({
         ok: true,
         alertSounds: updated.alertSounds,
         activeAlertSoundId: updated.activeAlertSoundId,
       })
     }
-    if (!cfg.alertSounds.some((item) => item.id === id)) {
+    if (!cfg.alertSounds?.some((item) => item?.id === id)) {
       return res.status(404).json({ error: 'Som de alerta não encontrado' })
     }
     const updated = updateConfig({ activeAlertSoundId: id })
+    broadcastAlertSound(req, updated)
     res.json({
       ok: true,
       alertSounds: updated.alertSounds,
@@ -160,4 +180,3 @@ router.post('/alert-sounds/:id/activate', adminRequired, (req, res) => {
 })
 
 export default router
-

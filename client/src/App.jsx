@@ -2,12 +2,21 @@ import React, { useState, useEffect } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { clearAuth, getUser } from './state/auth.js'
 import { apiPublic } from './services/api.js'
+import { ioClient } from './services/socket.js'
 import { init as initSipBackground } from './services/sipBackground.js'
 
 export default function App() {
   const nav = useNavigate()
   const loc = useLocation()
   const user = getUser()
+  const setGlobalAlertSound = (url) => {
+    try {
+      if (url) localStorage.setItem('notif_sound_url', url);
+      else localStorage.removeItem('notif_sound_url');
+      window.dispatchEvent(new Event('chat:alertSoundUpdated'));
+    } catch {}
+  }
+
   const [userTick, setUserTick] = useState(0)
   useEffect(() => { 
     const onUserUpdated = () => setUserTick(t => t + 1)
@@ -23,16 +32,11 @@ export default function App() {
     }
     applyLocalWallpaper()
     window.addEventListener('chat:wallpaperUpdated', applyLocalWallpaper)
-    const applyAlertSound = (url) => {
-      try {
-        if (url) localStorage.setItem('notif_sound_url', url)
-        else localStorage.removeItem('notif_sound_url')
-        window.dispatchEvent(new Event('chat:alertSoundUpdated'))
-      } catch {}
-    }
+    const applyAlertSound = (url) => setGlobalAlertSound(url)
     ;(async () => {
       try {
-        const res = await fetch((import.meta.env.VITE_API_URL || `${window.location.origin}/api`) + '/admin/config/public')
+        const apiBase = (import.meta.env.VITE_API_URL || window.location.origin + '/api').replace(/\/$/, '')
+        const res = await fetch(apiBase + '/admin/config/public')
         if (!res.ok) return
         const pub = await res.json()
         const hasLocal = !!(localStorage.getItem('chat_wallpaper') || '')
@@ -46,6 +50,15 @@ export default function App() {
     })()
     return () => window.removeEventListener('chat:wallpaperUpdated', applyLocalWallpaper)
   }, [])
+  useEffect(() => {
+    const s = ioClient();
+    const onSound = (payload = {}) => {
+      setGlobalAlertSound(payload?.url || '');
+    };
+    s.on('config:alert-sound', onSound);
+    return () => s.off('config:alert-sound', onSound);
+  }, [])
+
   // Initialize background SIP registration (keeps your extension online)
   useEffect(() => {
     initSipBackground().catch(()=>{})
@@ -286,5 +299,11 @@ export default function App() {
     </div>
   )
 }
+
+
+
+
+
+
 
 
