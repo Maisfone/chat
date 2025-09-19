@@ -121,11 +121,22 @@ export default function Chat() {
 
   // Notifications + sound + unread count in title
   const notifAskedKey = "chat_notif_asked";
-  const [notifOk, setNotifOk] = useState(
-    typeof window !== "undefined" && "Notification" in window
-      ? Notification.permission === "granted"
-      : false
+  const notifSupported =
+    typeof window !== "undefined" && "Notification" in window;
+  const initialNotifPermission = (() => {
+    if (!notifSupported) return "default";
+    try {
+      return Notification.permission;
+    } catch {
+      return "default";
+    }
+  })();
+  const [notifPermission, setNotifPermission] = useState(
+    initialNotifPermission
   );
+  const [notifOk, setNotifOk] = useState(initialNotifPermission === "granted");
+  const isSecureContext =
+    typeof window !== "undefined" ? window.isSecureContext : false;
   const initialTitleRef = useRef(
     typeof document !== "undefined" ? document.title : "Chat"
   );
@@ -213,31 +224,40 @@ export default function Chat() {
       document.removeEventListener("visibilitychange", updateFocus);
     };
   }, []);
-  const handleToastClick = useCallback((toast) => {
-    dismissToast(toast.id);
-    if (toast.groupId) {
-      const group = groups.find((g) => g.id === toast.groupId);
-      if (group) {
-        setActive(group);
+  const handleToastClick = useCallback(
+    (toast) => {
+      dismissToast(toast.id);
+      if (toast.groupId) {
+        const group = groups.find((g) => g.id === toast.groupId);
+        if (group) {
+          setActive(group);
+          try {
+            window.focus?.();
+          } catch {}
+          return;
+        }
+        const dm = dms.find((d) => d.groupId === toast.groupId);
+        if (dm) {
+          setActive({
+            id: dm.groupId,
+            name: dm.other?.name || toast.title || "Direto",
+          });
+          try {
+            window.focus?.();
+          } catch {}
+          return;
+        }
+        setActive({
+          id: toast.groupId,
+          name: toast.groupName || toast.title || "Direto",
+        });
         try {
           window.focus?.();
         } catch {}
-        return;
       }
-      const dm = dms.find((d) => d.groupId === toast.groupId);
-      if (dm) {
-        setActive({ id: dm.groupId, name: dm.other?.name || toast.title || "Direto" });
-        try {
-          window.focus?.();
-        } catch {}
-        return;
-      }
-      setActive({ id: toast.groupId, name: toast.groupName || toast.title || "Direto" });
-      try {
-        window.focus?.();
-      } catch {}
-    }
-  }, [dismissToast, groups, dms]);
+    },
+    [dismissToast, groups, dms]
+  );
 
   useEffect(() => {
     const onSoundUpdated = () => {
@@ -257,19 +277,22 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    try {
-      if (typeof window === "undefined" || !("Notification" in window)) return;
-      const asked = localStorage.getItem(notifAskedKey);
-      if (Notification.permission === "default" && !asked) {
-        Notification.requestPermission().then((p) => {
-          setNotifOk(p === "granted");
-          localStorage.setItem(notifAskedKey, "1");
-        });
-      } else {
-        setNotifOk(Notification.permission === "granted");
-      }
-    } catch {}
-  }, []);
+    if (!notifSupported) return;
+    const syncPermission = () => {
+      try {
+        const current = Notification.permission;
+        setNotifPermission(current);
+        setNotifOk(current === "granted");
+      } catch {}
+    };
+    syncPermission();
+    window.addEventListener("focus", syncPermission);
+    document.addEventListener("visibilitychange", syncPermission);
+    return () => {
+      window.removeEventListener("focus", syncPermission);
+      document.removeEventListener("visibilitychange", syncPermission);
+    };
+  }, [notifSupported]);
 
   function previewFromMessage(msg) {
     if (!msg) return "";
@@ -793,8 +816,8 @@ export default function Chat() {
         })();
         if (shouldToast) {
           enqueueToast({
-            title: msg.author?.name || 'Nova mensagem',
-            body: previewFromMessage(msg) || '',
+            title: msg.author?.name || "Nova mensagem",
+            body: previewFromMessage(msg) || "",
             groupId: msg.groupId,
             groupName: msg.group?.name || undefined,
             messageId: msg.id,
@@ -1435,7 +1458,8 @@ export default function Chat() {
             </div>
           ))}
         </div>
-      )}      {leftOpen && (
+      )}{" "}
+      {leftOpen && (
         <>
           <div
             className="absolute inset-0 bg-black/20 z-10"
@@ -1620,7 +1644,6 @@ export default function Chat() {
           </div>
         </>
       )}
-
       {/* Desktop sidebar */}
       <div className="hidden md:flex w-80 border-r border-slate-200 flex-col overflow-auto">
         <div className="px-3 py-2 border-b border-slate-200">
@@ -1754,7 +1777,6 @@ export default function Chat() {
           })}
         </div>
       </div>
-
       {/* Conversation area */}
       <div className="flex-1 flex flex-col chat-bg">
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
@@ -2680,4 +2702,3 @@ function Avatar({ url, name, size = 28 }) {
 }
 
 // Helpers for right sidebar (defined after component and hoisted above via closures)
-

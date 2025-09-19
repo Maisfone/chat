@@ -18,8 +18,7 @@ function inferDefaultApiBase() {
   return "http://localhost:3000/api";
 }
 
-export const API_BASE =
-  import.meta.env.VITE_API_URL || inferDefaultApiBase();
+export const API_BASE = import.meta.env.VITE_API_URL || inferDefaultApiBase();
 export const apiOrigin = API_BASE.replace(/\/?api$/, "");
 
 async function handle(res) {
@@ -93,7 +92,9 @@ export const apiPublic = {
       body: JSON.stringify(body),
     }).then(handleAuth),
   upload: (path, form) =>
-    fetch(`${API_BASE}${path}`, { method: "POST", body: form }).then(handleAuth),
+    fetch(`${API_BASE}${path}`, { method: "POST", body: form }).then(
+      handleAuth
+    ),
 };
 
 export function absUrl(u) {
@@ -108,18 +109,23 @@ async function handleAuth(res) {
   if (!res.ok) {
     const t = await res.text();
     let msg;
-    try { msg = JSON.parse(t).error || t; } catch { msg = t; }
-    if (res.status === 401) {
-      try { clearAuth(); } catch {}
-      try { if (typeof window !== 'undefined') window.location.assign('/login'); } catch {}
-      throw new Error(msg || 'Sessão expirada. Faça login novamente.');
+    try {
+      msg = JSON.parse(t).error || t;
+    } catch {
+      msg = t;
     }
-    throw new Error(msg || 'Erro de requisição');
+    if (res.status === 401) {
+      try {
+        clearAuth();
+      } catch {}
+      try {
+        if (typeof window !== "undefined") window.location.assign("/login");
+      } catch {}
+      throw new Error(msg || "Sessão expirada. Faça login novamente.");
+    }
+    throw new Error(msg || "Erro de requisição");
   }
-  const ct = res.headers.get('content-type') || '';
-  if (ct.includes('application/json')) return res.json();
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
   return res.text();
 }
-
-
-
