@@ -120,7 +120,6 @@ export default function Chat() {
   const user = getUser();
 
   // Notifications + sound + unread count in title
-  const notifAskedKey = "chat_notif_asked";
   const notifSupported =
     typeof window !== "undefined" && "Notification" in window;
   const initialNotifPermission = (() => {
@@ -131,9 +130,6 @@ export default function Chat() {
       return "default";
     }
   })();
-  const [notifPermission, setNotifPermission] = useState(
-    initialNotifPermission
-  );
   const [notifOk, setNotifOk] = useState(initialNotifPermission === "granted");
   const isSecureContext =
     typeof window !== "undefined" ? window.isSecureContext : false;
@@ -152,20 +148,7 @@ export default function Chat() {
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
   const toastTimeouts = useRef(new Map());
-  const [soundOn, setSoundOn] = useState(() => {
-    try {
-      return localStorage.getItem("chat_sound") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  function toggleSound() {
-    try {
-      const next = !soundOn;
-      setSoundOn(next);
-      localStorage.setItem("chat_sound", next ? "1" : "0");
-    } catch {}
-  }
+  const soundOn = true;
   const enqueueToast = useCallback((payload) => {
     let createdId = "";
     setToasts((prev) => {
@@ -280,17 +263,27 @@ export default function Chat() {
 
   useEffect(() => {
     if (!notifSupported) return;
+    let cancelled = false;
     const syncPermission = () => {
       try {
         const current = Notification.permission;
-        setNotifPermission(current);
-        setNotifOk(current === "granted");
+        if (!cancelled) {
+          setNotifOk(current === "granted");
+        }
       } catch {}
     };
     syncPermission();
+    try {
+      if (Notification.permission === "default") {
+        Notification.requestPermission().then((perm) => {
+          if (!cancelled) setNotifOk(perm === "granted");
+        });
+      }
+    } catch {}
     window.addEventListener("focus", syncPermission);
     document.addEventListener("visibilitychange", syncPermission);
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", syncPermission);
       document.removeEventListener("visibilitychange", syncPermission);
     };
@@ -1491,17 +1484,6 @@ export default function Chat() {
                 className="flex-1 border rounded px-3 py-1.5 text-sm"
               />
               <button
-                className={`text-sm px-2 py-1 rounded border ${
-                  soundOn
-                    ? "border-green-500 text-green-700"
-                    : "border-slate-300 text-slate-600"
-                } hover:bg-slate-50`}
-                onClick={toggleSound}
-                title={soundOn ? "Som: ligado" : "Som: desligado"}
-              >
-                {soundOn ? "Som: ON" : "Som: OFF"}
-              </button>
-              <button
                 className="text-slate-500 hover:text-slate-700"
                 onClick={() => setLeftOpen(false)}
                 aria-label="Fechar"
@@ -1821,43 +1803,6 @@ export default function Chat() {
             </span>
           </button>
           <div className="ml-auto flex items-center gap-1">
-            {/* Notificações */}
-            <button
-              type="button"
-              title={notifOk ? "Notificações ativas" : "Ativar notificações"}
-              className={`px-2 py-1 rounded border ${
-                notifOk
-                  ? "border-green-300 text-green-700 hover:bg-green-50"
-                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
-              }`}
-              onClick={() => {
-                try {
-                  if (!("Notification" in window)) return;
-                  if (Notification.permission === "granted") {
-                    showToast?.("Notificações já ativas", "info");
-                    return;
-                  }
-                  Notification.requestPermission().then((p) => {
-                    setNotifOk(p === "granted");
-                  });
-                } catch {}
-              }}
-            >
-              🔔
-            </button>
-            {/* Som */}
-            <button
-              type="button"
-              title={soundOn ? "Som ligado" : "Som desligado"}
-              className={`px-2 py-1 rounded border ${
-                soundOn
-                  ? "border-blue-300 text-blue-700 hover:bg-blue-50"
-                  : "border-slate-300 text-slate-600 hover:bg-slate-50"
-              }`}
-              onClick={toggleSound}
-            >
-              🔊
-            </button>
             {/* Mobile search toggle */}
             <button
               ref={mobileSearchToggleRef}
