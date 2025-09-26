@@ -241,6 +241,7 @@ export default function Chat() {
           setActive({
             id: dm.groupId,
             name: dm.other?.name || toast.title || "Direto",
+            avatarUrl: dm.other?.avatarUrl || undefined,
           });
           try {
             window.focus?.();
@@ -250,6 +251,7 @@ export default function Chat() {
         setActive({
           id: toast.groupId,
           name: toast.groupName || toast.title || "Direto",
+          avatarUrl: toast.avatarUrl || undefined,
         });
         try {
           window.focus?.();
@@ -315,7 +317,12 @@ export default function Chat() {
           window?.focus?.();
         } catch {}
         try {
-          setActive({ id: msg.groupId, name: msg.group?.name || "Direto" });
+          setActive({
+            id: msg.groupId,
+            name: msg.group?.name || "Direto",
+            avatarUrl:
+              msg.group?.avatarUrl || msg.author?.avatarUrl || undefined,
+          });
         } catch {}
         try {
           n.close();
@@ -559,6 +566,7 @@ export default function Chat() {
             setActive({
               id: foundDM.groupId,
               name: foundDM.other?.name || "Direto",
+              avatarUrl: foundDM.other?.avatarUrl || undefined,
             });
             return;
           }
@@ -741,7 +749,11 @@ export default function Chat() {
             ...rest,
           ];
         });
-        setActive({ id: dm.groupId, name: dm.other?.name || "Direto" });
+        setActive({
+          id: dm.groupId,
+          name: dm.other?.name || "Direto",
+          avatarUrl: dm.other?.avatarUrl || undefined,
+        });
         if (closeDrawer) setLeftOpen(false);
         return;
       }
@@ -765,7 +777,11 @@ export default function Chat() {
             ...rest,
           ];
         });
-        setActive({ id: dm.groupId, name: dm.other?.name || "Direto" });
+        setActive({
+          id: dm.groupId,
+          name: dm.other?.name || "Direto",
+          avatarUrl: dm.other?.avatarUrl || undefined,
+        });
         if (closeDrawer) setLeftOpen(false);
         return;
       }
@@ -821,6 +837,7 @@ export default function Chat() {
             groupId: msg.groupId,
             groupName: msg.group?.name || undefined,
             messageId: msg.id,
+            avatarUrl: msg.author?.avatarUrl || undefined,
           });
           try {
             showNotificationFor(msg);
@@ -1790,11 +1807,18 @@ export default function Chat() {
           </button>
           <button
             type="button"
-            className="truncate text-left hover:underline"
+            className="flex items-center gap-3 min-w-0 truncate text-left hover:underline"
             onClick={() => openRightProfile()}
             title="Abrir perfil"
           >
-            {active?.name || "Selecione um grupo"}
+            <Avatar
+              url={active?.avatarUrl}
+              name={active?.name || "Selecione um grupo"}
+              size={36}
+            />
+            <span className="truncate">
+              {active?.name || "Selecione um grupo"}
+            </span>
           </button>
           <div className="ml-auto flex items-center gap-1">
             {/* Notificações */}
@@ -1921,7 +1945,7 @@ export default function Chat() {
         {!active && (
           <div className="flex-1 grid place-items-center p-6">
             <div className="text-center text-slate-600 dark:text-slate-300">
-              <div className="mx-auto w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-700 grid place-items-center mb-3 shadow">
+              <div className="mx-auto dark:bg-slate-700 grid place-items-center">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -2361,7 +2385,7 @@ export default function Chat() {
             return (
               <div key={m.id} id={`msg-${m.id}`} className="w-full">
                 {showDate && (
-                  <div className="text-center text-xs text-slate-500 my-2">
+                  <div className="max-w-32 mx-auto rounded-full text-center text-xs bg-sky-600  text-slate-100 my-2">
                     {dateLabel}
                   </div>
                 )}
@@ -2680,6 +2704,7 @@ function Avatar({ url, name, size = 28 }) {
     height: size,
     borderRadius: "50%",
     objectFit: "cover",
+    flexShrink: 0,
   };
   if (url)
     return <img src={absUrl(url)} alt={name || "avatar"} style={style} />;

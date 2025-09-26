@@ -3,31 +3,8 @@ networks:
     external: true
 
 services:
-  postgres:
-    image: postgres:15
-    container_name: farmachat-postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 1oBH87s3FXk8uPfwTUIxMgxu6rJprfsF
-      POSTGRES_DB: db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - minha_rede
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 || exit 1",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-
   server:
-    image: mtinformatica/farmachat:server
+    image: mtinformatica/farmachat:server-1.0.7
     container_name: farmachat-server
     environment:
       DATABASE_URL: postgres://postgres:1oBH87s3FXk8uPfwTUIxMgxu6rJprfsF@postgres:5432/db
@@ -39,11 +16,11 @@ services:
       # Armazenamento: local (padrão) ou s3
       # STORAGE_DRIVER: local
       # Config S3 (descomente para usar provedores S3/MinIO):
-      # S3_BUCKET: seu-bucket
-      # S3_REGION: us-east-1
-      # S3_ACCESS_KEY_ID: xxx
-      # S3_SECRET_ACCESS_KEY: yyy
-      # S3_ENDPOINT: https://s3.sa-east-1.amazonaws.com   # ou URL do MinIO/Wasabi
+      S3_BUCKET: chatfarmacon
+      S3_REGION: us-central-1
+      S3_ACCESS_KEY_ID: 2RD2GCFVRAWK0ZPVRJRS
+      S3_SECRET_ACCESS_KEY: eqj8nEpHPDrQskkQcq5ZeeS4IEP03E9zHmaUeoCJ
+      S3_ENDPOINT: https://s3.us-central-1.wasabisys.com # ou URL do MinIO/Wasabi
       # S3_PUBLIC_BASE: https://cdn.seu-dominio.com         # opcional (CDN/CloudFront)
       # S3_FORCE_PATH_STYLE: "true"                         # para MinIO/compatíveis
       CORS_ORIGIN: https://chat.farmacon.com.br
@@ -76,7 +53,7 @@ services:
       start_period: 20s
 
   cliente:
-    image: mtinformatica/farmachat:client
+    image: mtinformatica/farmachat:client-1.0.7
     container_name: farmachat-client
     depends_on:
       - server

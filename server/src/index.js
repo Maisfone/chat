@@ -18,6 +18,7 @@ import pushRoutes from "./routes/push.js";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", true);
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
@@ -129,3 +130,4 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
+

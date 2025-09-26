@@ -13,7 +13,7 @@ router.use(authRequired)
 
 // Perfil próprio
 router.get('/me', async (req, res) => {
-  const me = await prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, name: true, email: true, isAdmin: true, avatarUrl: true } })
+  const me = await prisma.user.findUnique({ where: { id: req.user.id }, select: { id: true, name: true, email: true, isAdmin: true, avatarUrl: true, phone: true, address: true } })
   res.json(me)
 })
 
@@ -71,8 +71,8 @@ router.patch('/me', upload.single('avatar'), async (req, res) => {
       const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`
       avatarUrl = `${base}/${uploadDir}/${req.file.filename}`
     }
-    await prisma.user.update({ where: { id: req.user.id }, data: { ...data, ...(avatarUrl ? { avatarUrl } : {}) } })
-    res.json({ ok: true })
+    const user = await prisma.user.update({ where: { id: req.user.id }, data: { ...data, ...(avatarUrl ? { avatarUrl } : {}) }, select: { id: true, name: true, email: true, isAdmin: true, avatarUrl: true, phone: true, address: true } })
+    res.json({ ok: true, user })
   } catch (e) {
     res.status(400).json({ error: 'Falha ao atualizar perfil' })
   }
