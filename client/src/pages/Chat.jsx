@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, absUrl } from "../services/api.js";
 import { ioClient } from "../services/socket.js";
 import { getUser } from "../state/auth.js";
@@ -65,6 +66,10 @@ export default function Chat() {
     });
   }
   const [menuFor, setMenuFor] = useState(null);
+  const messageMenuContainerRef = useRef(null);
+  const setMessageMenuContainer = useCallback((node) => {
+    messageMenuContainerRef.current = node;
+  }, []);
   const [highlightId, setHighlightId] = useState(null);
   const [convQuery, setConvQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
@@ -118,6 +123,30 @@ export default function Chat() {
   const mediaStreamRef = useRef(null);
   const recTimerRef = useRef(null);
   const user = getUser();
+  const nav = useNavigate();
+
+  useEffect(() => {
+    if (!menuFor) return;
+
+    const handleOutside = (event) => {
+      const container = messageMenuContainerRef.current;
+      if (!container) {
+        setMenuFor(null);
+        return;
+      }
+      if (!container.contains(event.target)) {
+        setMenuFor(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+    };
+  }, [menuFor]);
 
   // Notifications + sound + unread count in title
   const notifSupported =
@@ -296,6 +325,22 @@ export default function Chat() {
     if (msg.type === "audio") return "Áudio";
     return "Anexo";
   }
+  function fileNameFromUrl(u) {
+    try {
+      if (!u) return "";
+      // Prefer ?name= query parameter if present
+      try {
+        const url = new URL(u, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+        const qn = url.searchParams.get("name");
+        if (qn) return qn;
+      } catch {}
+      const noQuery = String(u).split("?")[0];
+      const base = noQuery.split("/").pop() || "";
+      return decodeURIComponent(base);
+    } catch {
+      return String(u || "");
+    }
+  }
   function showNotificationFor(msg) {
     try {
       if (!notifOk) return;
@@ -422,15 +467,11 @@ export default function Chat() {
   // Right sidebar (profile)
   const [rightOpen, setRightOpen] = useState(false);
   const [rightLoading, setRightLoading] = useState(false);
-  const [meProfile, setMeProfile] = useState({
-    id: "",
-    name: "",
-    email: "",
-    phone: "",
-    address: "",
-    avatarUrl: "",
-    isAdmin: false,
-  });
+  const [rightMode, setRightMode] = useState("self");
+  const [contactProfile, setContactProfile] = useState(null);
+  const [contactGroups, setContactGroups] = useState([]);
+  const [contactLoading, setContactLoading] = useState(false);
+  const [contactErr, setContactErr] = useState("");
   const [rightTab, setRightTab] = useState("perfil"); // 'perfil' | 'arquivos' | 'favoritos'
   const [pfName, setPfName] = useState("");
   const [pfPhone, setPfPhone] = useState("");
@@ -987,7 +1028,9 @@ export default function Chat() {
       if (hasFile) {
         const form = new FormData();
         form.append("file", file);
-        const kind = file.type?.startsWith("audio") ? "audio" : "image";
+        let kind = "file";
+        if (file.type?.startsWith("audio")) kind = "audio";
+        else if (file.type?.startsWith("image")) kind = "image";
         const q = replyTo?.id ? `&replyToId=${replyTo.id}` : "";
         const created2 = await api.upload(
           `/messages/${active.id}/upload?type=${kind}${q}`,
@@ -1259,6 +1302,36 @@ export default function Chat() {
   }
   function openRightProfile() {
     setRightOpen(true);
+    // If current active is a DM, open the contact's profile; otherwise open self profile
+    const gid = active?.id;
+    if (gid) {
+      const dm = dms.find((d) => d.groupId === gid);
+      if (dm?.other?.id) {
+        const full = (people || []).find((p) => p.id === dm.other.id) || dm.other;
+        setRightMode("contact");
+        setContactProfile(full || null);
+        // Load shared groups with this contact
+        (async () => {
+          try {
+            setContactLoading(true);
+            setContactErr("");
+            const list = await api.get(`/users/${dm.other.id}/shared-groups`);
+            setContactGroups(Array.isArray(list) ? list : []);
+          } catch (e) {
+            setContactErr(e?.message || "Falha ao carregar grupos em comum");
+            setContactGroups([]);
+          } finally {
+            setContactLoading(false);
+          }
+        })();
+        setRightTab("perfil");
+        setRightLoading(false);
+        setRightErr("");
+        setRightMsg("");
+        return;
+      }
+    }
+    setRightMode("self");
     hydrateMe(true);
   }
   async function saveProfile() {
@@ -2026,6 +2099,90 @@ export default function Chat() {
                   <>
                     {rightTab === "perfil" && (
                       <>
+                        {rightMode !== "self" ? (
+                          <>
+                            <div className="flex flex-col items-center gap-3">
+                              <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                                {contactProfile?.avatarUrl ? (
+                                  <img src={absUrl(contactProfile.avatarUrl)} alt="avatar" className="w-full h-full object-cover" />
+                                ) : (
+                                  <span className="text-slate-500 text-sm">Sem foto</span>
+                                )}
+                              </div>
+                              <div className="w-full">
+                                <div className="text-center font-semibold truncate">
+                                  {contactProfile?.name || "Contato"}
+                                </div>
+                                <div className="mt-2 space-y-1 text-sm">
+                                  {contactProfile?.email && (
+                                    <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                      {contactProfile.email}
+                                    </div>
+                                  )}
+                                  {contactProfile?.phone && (
+                                    <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                      {contactProfile.phone}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 flex justify-center gap-2">
+                              {contactProfile?.phone && (
+                                <button
+                                  type="button"
+                                  className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                                  onClick={() => {
+                                    const params = new URLSearchParams();
+                                    if (contactProfile.phone) params.set("to", contactProfile.phone);
+                                    if (contactProfile.name) params.set("name", contactProfile.name);
+                                    if (contactProfile.id) params.set("id", contactProfile.id);
+                                    nav(`/telefonia?${params.toString()}`);
+                                  }}
+                                >
+                                  Ligar
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                                onClick={() => setRightTab("arquivos")}
+                              >
+                                Ver arquivos
+                              </button>
+                            </div>
+                            <div className="mt-5">
+                              <div className="font-semibold mb-2">Grupos em comum</div>
+                              {contactLoading ? (
+                                <div className="text-sm text-slate-500">Carregando...</div>
+                              ) : contactErr ? (
+                                <div className="text-sm text-red-600">{contactErr}</div>
+                              ) : contactGroups.filter(g => (g?.name || '').toUpperCase() !== 'DM').length > 0 ? (
+                                <ul className="space-y-1">
+                                  {contactGroups
+                                    .filter((g) => (g?.name || '').toUpperCase() !== 'DM')
+                                    .map((g) => (
+                                    <li key={g.id}>
+                                      <button
+                                        type="button"
+                                        className="w-full text-left px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
+                                        onClick={() => {
+                                          setActive({ id: g.id, name: g.name });
+                                          setRightOpen(false);
+                                        }}
+                                      >
+                                        {g.name}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="text-sm text-slate-500">Nenhum grupo em comum.</div>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <>
                         <div className="flex items-center gap-3">
                           <div className="w-16 h-16 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
                             {pfAvatar ? (
@@ -2184,6 +2341,8 @@ export default function Chat() {
                         </div>
                       </>
                     )}
+                  </>
+                )}
 
                     {rightTab === "arquivos" && (
                       <div className="space-y-2">
@@ -2203,7 +2362,7 @@ export default function Chat() {
                                     : "Anexo"}
                                 </div>
                                 <div className="text-slate-500 truncate max-w-[220px]">
-                                  {m.content}
+                                  {m.type === "text" ? m.content : (fileNameFromUrl(m.content) || m.content)}
                                 </div>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
@@ -2357,6 +2516,11 @@ export default function Chat() {
                         : ""
                     }`}
                   >
+                    {!mine && (
+                      <div className="text-xs font-semibold text-slate-600 mb-1">
+                        {m.author?.name || "Contato"}
+                      </div>
+                    )}
                     {m.replyTo && (
                       <div className="mb-1 pl-2 border-l-4 border-blue-400 text-xs text-slate-600">
                         <div className="font-medium">
@@ -2391,12 +2555,13 @@ export default function Chat() {
                       />
                     ) : (
                       <a
-                        className="underline"
+                        className="underline break-all"
                         href={absUrl(m.content)}
                         target="_blank"
                         rel="noreferrer"
+                        title={fileNameFromUrl(m.content) || "Abrir anexo"}
                       >
-                        Abrir anexo
+                        {fileNameFromUrl(m.content) || "Abrir anexo"}
                       </a>
                     )}
                     <div className="mt-1 text-[10px] opacity-80 flex items-center gap-2">
@@ -2420,7 +2585,10 @@ export default function Chat() {
                       </button>
                     </div>
                   </div>
-                  <div className="ml-1 relative">
+                  <div
+                    className="ml-1 relative"
+                    ref={menuFor === m.id ? setMessageMenuContainer : null}
+                  >
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-700"
@@ -2523,7 +2691,10 @@ export default function Chat() {
           </button>
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              try { if (fileInputRef.current) fileInputRef.current.value = "" } catch {}
+              fileInputRef.current?.click();
+            }}
             title="Anexar"
             className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
             aria-label="Anexar"
@@ -2533,7 +2704,7 @@ export default function Chat() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,audio/*"
+            accept="*/*"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
             className="hidden"
           />

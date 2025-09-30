@@ -1,15 +1,8 @@
 import { API_BASE } from './api.js'
-import { getToken } from '../state/auth.js'
-
-function authHeader() {
-  const token = getToken()
-  if (!token) throw new Error('Token ausente para push')
-  return `Bearer ${token}`
-}
 
 export async function getVapidKey() {
   const res = await fetch(`${API_BASE}/push/vapid-public-key`, {
-    headers: { Authorization: authHeader() },
+    headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
   })
   if (!res.ok) throw new Error('Falha ao obter VAPID key')
   const data = await res.json()
@@ -37,7 +30,7 @@ export async function subscribePush() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: authHeader(),
+      Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
     },
     body: JSON.stringify({ subscription: sub }),
   })
@@ -60,7 +53,7 @@ export async function unsubscribePush() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: authHeader(),
+        Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
       },
       body: JSON.stringify({ endpoint }),
     }).catch(() => {})

@@ -51,8 +51,8 @@ export default function Login() {
     try {
       const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
       if (!emailOk) throw new Error("Informe um e-mail válido");
-      if (!password || password.length < 8)
-        throw new Error("A senha deve ter pelo menos 8 caracteres");
+      if (!password || password.length < 6)
+        throw new Error("A senha deve ter pelo menos 6 caracteres");
 
       const res = await api.post("/auth/login", { email, password });
       setAuth(res.token, res.user);
@@ -176,7 +176,7 @@ export default function Login() {
                   placeholder="Insira sua senha"
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
-                  minLength={8}
+                  minLength={6}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

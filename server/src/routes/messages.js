@@ -97,14 +97,25 @@ router.post('/:groupId', async (req, res) => {
 router.post('/:groupId/upload', upload, async (req, res) => {
   const { groupId } = req.params
   const kind = (req.query.type || 'audio')
-  if (!['audio', 'image'].includes(kind)) return res.status(400).json({ error: 'Tipo inválido' })
+  if (!['audio', 'image', 'file'].includes(kind)) return res.status(400).json({ error: 'Tipo inválido' })
   const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
   if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
   const url = req.file?.url
   if (!url) return res.status(400).json({ error: 'Falha no upload' })
+  // Preserve original file name in the URL as a query param for display purposes
+  let contentUrl = url
+  try {
+    const original = req.file?.originalname || ''
+    if (original) {
+      const hasQuery = /\?/.test(url)
+      const sep = hasQuery ? '&' : '?'
+      contentUrl = `${url}${sep}name=${encodeURIComponent(original)}`
+    }
+  } catch {}
   const replyToId = typeof req.query.replyToId === 'string' ? req.query.replyToId : null
+  const storedType = kind === 'file' ? 'sticker' : kind
   const msg = await prisma.message.create({
-    data: { groupId, authorId: req.user.id, type: kind, content: url, replyToId },
+    data: { groupId, authorId: req.user.id, type: storedType, content: contentUrl, replyToId },
     include: {
       author: { select: { id: true, name: true, avatarUrl: true } },
       replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
@@ -114,7 +125,8 @@ router.post('/:groupId/upload', upload, async (req, res) => {
   try {
     const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
     const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
-    await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body: kind==='image'?'Imagem':'Áudio', tag: `group:${groupId}`, data: { groupId } })
+    const body = kind==='image' ? 'Imagem' : (kind==='audio' ? 'Áudio' : 'Anexo')
+    await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body, tag: `group:${groupId}`, data: { groupId } })
   } catch {}
   res.status(201).json(msg)
 })
