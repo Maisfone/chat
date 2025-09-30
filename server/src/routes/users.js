@@ -3,6 +3,7 @@ import { prisma } from '../prisma.js'
 import { adminRequired, authRequired } from '../middleware/auth.js'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+import { handleUploadSingle } from '../lib/storage.js'
 import multer from 'multer'
 import fs from 'fs'
 import path from 'path'
@@ -58,7 +59,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage })
 
 // Atualizar perfil próprio (nome, telefone, endereço, avatar)
-router.patch('/me', upload.single('avatar'), async (req, res) => {
+router.patch('/me', ...(Array.isArray(handleUploadSingle('avatar')) ? handleUploadSingle('avatar') : [handleUploadSingle('avatar')]), async (req, res) => {
   const schema = z.object({
     name: z.string().min(2).optional(),
     phone: z.string().optional().nullable(),
@@ -66,11 +67,7 @@ router.patch('/me', upload.single('avatar'), async (req, res) => {
   })
   try {
     const data = schema.parse(req.body)
-    let avatarUrl
-    if (req.file) {
-      const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`
-      avatarUrl = `${base}/${uploadDir}/${req.file.filename}`
-    }
+    const avatarUrl = req.file?.url
     const user = await prisma.user.update({ where: { id: req.user.id }, data: { ...data, ...(avatarUrl ? { avatarUrl } : {}) }, select: { id: true, name: true, email: true, isAdmin: true, avatarUrl: true, phone: true, address: true } })
     res.json({ ok: true, user })
   } catch (e) {

@@ -149,6 +149,31 @@ router.post('/:groupId/read', async (req, res) => {
   })
   res.json({ ok: true, marked: unread.length })
 })
+// Editar mensagem (somente texto) pelo autor ou admin
+router.patch('/:messageId', async (req, res) => {
+  const { messageId } = req.params
+  try {
+    const schema = z.object({ content: z.string().min(1) })
+    const { content } = schema.parse(req.body)
+    const msg = await prisma.message.findUnique({ where: { id: messageId } })
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' })
+    const isAdmin = !!req.user?.isAdmin
+    if (!isAdmin && msg.authorId !== req.user.id) return res.status(403).json({ error: 'Sem permissão' })
+    if (msg.type !== 'text') return res.status(400).json({ error: 'Apenas mensagens de texto podem ser editadas' })
+    const updated = await prisma.message.update({
+      where: { id: messageId },
+      data: { content, editedAt: new Date() },
+      include: {
+        author: { select: { id: true, name: true, avatarUrl: true } },
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+      }
+    })
+    try { req.io.to(updated.groupId).emit('message:updated', updated) } catch {}
+    res.json(updated)
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao editar mensagem' })
+  }
+})
 // Apagar (soft-delete) mensagem do autor (ou admin)
 router.delete('/:messageId', async (req, res) => {
   const { messageId } = req.params

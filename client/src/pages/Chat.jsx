@@ -71,6 +71,8 @@ export default function Chat() {
     messageMenuContainerRef.current = node;
   }, []);
   const [highlightId, setHighlightId] = useState(null);
+  const [editId, setEditId] = useState("");
+  const [editText, setEditText] = useState("");
   const [convQuery, setConvQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const emojis = [
@@ -124,6 +126,8 @@ export default function Chat() {
   const recTimerRef = useRef(null);
   const user = getUser();
   const nav = useNavigate();
+  const [recPendingFile, setRecPendingFile] = useState(null);
+  const [recPreviewUrl, setRecPreviewUrl] = useState("");
 
   useEffect(() => {
     if (!menuFor) return;
@@ -952,6 +956,11 @@ export default function Chat() {
           } catch {}
         }
       };
+      const onUpdated = (msg) => {
+        if (msg?.groupId === active.id) {
+          setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
+        }
+      };
       const onDeleted = (payload) => {
         if (payload.groupId === active.id)
           setMessages((prev) =>
@@ -961,10 +970,12 @@ export default function Chat() {
           );
       };
       s.on("message:new", onNew);
+      s.on("message:updated", onUpdated);
       s.on("message:deleted", onDeleted);
       unsub = () => {
         setMenuFor(null);
         s.off("message:new", onNew);
+        s.off("message:updated", onUpdated);
         s.off("message:deleted", onDeleted);
         s.emit("group:leave", active.id);
       };
@@ -1277,6 +1288,37 @@ export default function Chat() {
     } catch {}
     mediaStreamRef.current = null;
     mediaRecRef.current = null;
+  }
+  useEffect(() => {
+    return () => {
+      try {
+        if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
+      } catch {}
+    };
+  }, [recPreviewUrl]);
+
+  async function sendPendingAudio() {
+    if (!recPendingFile || !active?.id) return;
+    try {
+      const form = new FormData();
+      form.append("file", recPendingFile);
+      const created = await api.upload(`/messages/${active.id}/upload?type=audio`, form);
+      setMessages((prev) => (prev.some((m) => m.id === created.id) ? prev : [...prev, created]));
+      setRecPendingFile(null);
+      try {
+        if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
+      } catch {}
+      setRecPreviewUrl("");
+    } catch (e) {
+      setRecError(e?.message || "Falha ao enviar áudio");
+    }
+  }
+  function cancelPendingAudio() {
+    setRecPendingFile(null);
+    try {
+      if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
+    } catch {}
+    setRecPreviewUrl("");
   }
 
   // Right sidebar logic
@@ -2540,7 +2582,32 @@ export default function Chat() {
                     {m.deletedAt ? (
                       <div className="italic opacity-70">Mensagem apagada</div>
                     ) : m.type === "text" ? (
-                      <div>{m.content}</div>
+                      <MessageText
+                        message={m}
+                        mine={mine}
+                        onStartEdit={(msg) => {
+                          setEditId(msg.id);
+                          setEditText(msg.content || "");
+                          setMenuFor(null);
+                        }}
+                        onSave={async (msg, value) => {
+                          try {
+                            const updated = await api.patch(`/messages/${msg.id}`, { content: value.trim() });
+                            setMessages((prev) => prev.map((x) => (x.id === msg.id ? updated : x)));
+                            setEditId("");
+                            setEditText("");
+                          } catch (e) {
+                            setErr(e?.message || "Falha ao editar");
+                          }
+                        }}
+                        onCancel={() => {
+                          setEditId("");
+                          setEditText("");
+                        }}
+                        editingId={editId}
+                        editText={editText}
+                        setEditText={setEditText}
+                      />
                     ) : m.type === "image" || m.type === "gif" ? (
                       <img
                         src={absUrl(m.content)}
@@ -2608,6 +2675,18 @@ export default function Chat() {
                         >
                           Responder
                         </button>
+                        {(m.author?.id || m.authorId) === user?.id && m.type === 'text' && !m.deletedAt && (
+                          <button
+                            className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                            onClick={() => {
+                              setEditId(m.id);
+                              setEditText(m.content || '');
+                              setMenuFor(null);
+                            }}
+                          >
+                            Editar
+                          </button>
+                        )}
                         <button
                           className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
                           onClick={() => {
@@ -2674,6 +2753,29 @@ export default function Chat() {
           </div>
         )}
 
+        {recPendingFile && (
+          <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-center gap-3">
+            <audio src={recPreviewUrl} controls className="w-64" />
+            <div className="text-xs text-slate-600">Pré-escuta do áudio</div>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+                onClick={sendPendingAudio}
+              >
+                Enviar áudio
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded border border-slate-300 hover:bg-slate-100"
+                onClick={cancelPendingAudio}
+              >
+                Descartar
+              </button>
+            </div>
+          </div>
+        )}
+
         <form
           onSubmit={sendMessage}
           className={`flex gap-2 p-2 border-t border-slate-200 items-center relative bg-white/80 dark:bg-slate-900/60 backdrop-blur ${
@@ -2722,12 +2824,38 @@ export default function Chat() {
               </button>
             </div>
           )}
-          <input
+          <textarea
             ref={inputRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Digite sua mensagem..."
-            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-6 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            onPaste={(e) => {
+              try {
+                const items = e.clipboardData?.items || [];
+                for (let i = 0; i < items.length; i++) {
+                  const it = items[i];
+                  if (it && typeof it.type === "string" && it.type.startsWith("image/")) {
+                    const blob = it.getAsFile();
+                    if (blob) {
+                      const fname = `paste-${Date.now()}.${(blob.type.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")}`;
+                      const f = new File([blob], fname, { type: blob.type || "image/png" });
+                      setFile(f);
+                      // opcional: não impedir colagem de texto quando imagem
+                      e.preventDefault();
+                      break;
+                    }
+                  }
+                }
+              } catch {}
+            }}
+            placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
+            rows={2}
+            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 resize-y min-h-[48px]"
           />
           <button
             type="button"
@@ -2814,6 +2942,46 @@ export default function Chat() {
   );
 }
 
+function MessageText({ message, mine, editingId, editText, setEditText, onStartEdit, onSave, onCancel }) {
+  const isEditing = editingId === message.id;
+  if (isEditing) {
+    return (
+      <div>
+        <textarea
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          className="w-full border rounded px-2 py-1 text-sm text-slate-800"
+          rows={2}
+        />
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            type="button"
+            className="px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
+            onClick={() => onSave(message, editText)}
+          >
+            Salvar
+          </button>
+          <button
+            type="button"
+            className="px-2 py-1 rounded border border-slate-300 text-xs hover:bg-slate-50"
+            onClick={() => onCancel()}
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div>{message.content}</div>
+      {message.editedAt && (
+        <div className="text-[10px] opacity-70">(editado)</div>
+      )}
+    </div>
+  );
+}
+
 function Avatar({ url, name, size = 28 }) {
   const style = {
     width: size,
@@ -2843,3 +3011,4 @@ function Avatar({ url, name, size = 28 }) {
 }
 
 // Helpers for right sidebar (defined after component and hoisted above via closures)
+
