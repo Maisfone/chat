@@ -1077,10 +1077,10 @@ export default function Chat() {
     setErr("");
     if (!active) return;
     try {
-      const hasText = Boolean(text.trim());
+      const hasText = Boolean((text || "").trim());
       const hasFile = Boolean(file);
       if (hasText) {
-        const content = text.trim();
+        const content = text; // preserve user formatting (line breaks, spaces)
         const isUrl = /^(https?:\/\/\S+)/i.test(content);
         const lower = content.toLowerCase();
         const isGif = isUrl && /(\.gif($|\?))/i.test(lower);
@@ -3056,7 +3056,7 @@ function MessageText({ message, mine, editingId, editText, setEditText, onStartE
   }
   return (
     <div>
-      <div>{message.content}</div>
+      <div className="whitespace-pre-wrap break-words">{message.content}</div>
       {message.editedAt && (
         <div className="text-[10px] opacity-70">(editado)</div>
       )}
