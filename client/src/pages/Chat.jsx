@@ -2882,7 +2882,11 @@ export default function Chat() {
             title="Anexar"
             className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
             aria-label="Anexar"
+            style={{ fontSize: 0 }}
           >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+              <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
+            </svg>
             📎
           </button>
           <input
