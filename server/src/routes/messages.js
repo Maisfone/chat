@@ -54,7 +54,8 @@ router.get('/:groupId', async (req, res) => {
           author: { select: { id: true, name: true } }
         }
       },
-      _count: { select: { replies: true } }
+      _count: { select: { replies: true } },
+      reads: { select: { userId: true } }
     }
   })
   res.json(messages)
@@ -139,7 +140,7 @@ router.post('/:groupId/read', async (req, res) => {
   const member = await prisma.groupMember.findFirst({ where: { groupId, userId: me } })
   if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
   const unread = await prisma.message.findMany({
-    where: { groupId, deletedAt: null, reads: { none: { userId: me } } },
+    where: { groupId, deletedAt: null, authorId: { not: me }, reads: { none: { userId: me } } },
     select: { id: true }
   })
   if (unread.length === 0) return res.json({ ok: true, marked: 0 })
@@ -147,6 +148,7 @@ router.post('/:groupId/read', async (req, res) => {
     data: unread.map(u => ({ messageId: u.id, userId: me })),
     skipDuplicates: true
   })
+  try { req.io.to(groupId).emit('messages:read', { groupId, userId: me, ids: unread.map(u => u.id) }) } catch {}
   res.json({ ok: true, marked: unread.length })
 })
 // Editar mensagem (somente texto) pelo autor ou admin

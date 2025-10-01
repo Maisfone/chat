@@ -543,6 +543,47 @@ export default function Chat() {
   const desktopSearchToggleRef = useRef(null);
   const mobileSearchBarRef = useRef(null);
   const mobileSearchToggleRef = useRef(null);
+  // Presence map: { [userId]: status }
+  const [presence, setPresence] = useState({});
+  useEffect(() => {
+    const s = ioClient();
+    const meId = user?.id;
+    const status = (() => {
+      try { return localStorage.getItem('chat_status') || 'online' } catch { return 'online' }
+    })();
+    try { s.emit('presence:online', { userId: meId, status }); } catch {}
+    const onSnapshot = (payload = {}) => {
+      try {
+        const map = {};
+        for (const u of payload.users || []) { if (u?.userId) map[u.userId] = u.status || 'online' }
+        setPresence(map);
+      } catch {}
+    };
+    const onUpdate = (p = {}) => {
+      if (!p?.userId) return;
+      setPresence(prev => ({ ...prev, [p.userId]: p.status || 'online' }));
+    };
+    s.on('presence:snapshot', onSnapshot);
+    s.on('presence:update', onUpdate);
+    try { s.emit('presence:who'); } catch {}
+    return () => {
+      try { s.off('presence:snapshot', onSnapshot); s.off('presence:update', onUpdate) } catch {}
+    }
+  }, [user?.id]);
+  // DM other mapping for active conversation
+  const dmOtherId = useMemo(() => {
+    const gid = active?.id;
+    if (!gid) return null;
+    const dm = dms.find((d) => d.groupId === gid);
+    return dm?.other?.id || null;
+  }, [dms, active?.id]);
+  // Fallback para identificar o outro participante em DMs quando dms ainda não hidratou
+  const otherUserId = useMemo(() => {
+    if (dmOtherId) return dmOtherId;
+    // tenta inferir pelo autor de alguma mensagem que não seja minha
+    const m = (messages || []).find((x) => (x.author?.id || x.authorId) && (x.author?.id || x.authorId) !== user?.id);
+    return m ? (m.author?.id || m.authorId) : null;
+  }, [dmOtherId, messages, user?.id]);
 
   function openDesktopSearch() {
     if (!desktopSearchShown) setDesktopSearchShown(true);
@@ -868,6 +909,11 @@ export default function Chat() {
             return !windowFocused && !mine;
           }
         })();
+        // If the conversation is open and the message is from the other user,
+        // mark as read immediately so the sender sees the read status in realtime
+        if (isActive && !mine) {
+          try { api.post(`/messages/${active.id}/read`, {}); } catch {}
+        }
         if (shouldToast) {
           enqueueToast({
             title: msg.author?.name || "Nova mensagem",
@@ -961,6 +1007,21 @@ export default function Chat() {
           setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
         }
       };
+      const onReads = (payload) => {
+        try {
+          if (!payload || payload.groupId !== active.id) return;
+          const ids = Array.isArray(payload.ids) ? payload.ids : [];
+          const uid = payload.userId;
+          if (!uid || !ids.length) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              ids.includes(m.id)
+                ? { ...m, reads: (m.reads || []).some((r) => r.userId === uid) ? (m.reads || []) : [ ...(m.reads || []), { userId: uid } ] }
+                : m
+            )
+          );
+        } catch {}
+      };
       const onDeleted = (payload) => {
         if (payload.groupId === active.id)
           setMessages((prev) =>
@@ -971,11 +1032,13 @@ export default function Chat() {
       };
       s.on("message:new", onNew);
       s.on("message:updated", onUpdated);
+      s.on("messages:read", onReads);
       s.on("message:deleted", onDeleted);
       unsub = () => {
         setMenuFor(null);
         s.off("message:new", onNew);
         s.off("message:updated", onUpdated);
+        s.off("messages:read", onReads);
         s.off("message:deleted", onDeleted);
         s.emit("group:leave", active.id);
       };
@@ -1851,7 +1914,7 @@ export default function Chat() {
                 }`}
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <Avatar url={p.avatarUrl} name={p.name} size={40} />
+                  <Avatar url={p.avatarUrl} name={p.name} size={40} status={presence[p.id] || p.status} showStatus={true} />
                   <span className="flex flex-col items-start min-w-0">
                     <span className="truncate font-medium text-sm">
                       {p.name}
@@ -2638,6 +2701,25 @@ export default function Chat() {
                           minute: "2-digit",
                         })}
                       </span>
+                      {mine && (
+                        (() => {
+                          // Determine status and tooltip
+                          const readers = (m.reads || []).map((r) => r.userId);
+                          if (otherUserId) {
+                            const isRead = readers.includes(otherUserId);
+                            const title = isRead ? "Visualizada" : "Entregue";
+                            return <StatusTicks read={isRead} title={title} />;
+                          }
+                          // Grupo: azul quando há pelo menos um leitor (aproximação visual)
+                          const readerIds = readers.filter((uid) => uid && uid !== user?.id);
+                          if (readerIds.length === 0) return <StatusTicks read={false} title="Entregue" />;
+                          const names = readerIds
+                            .map((uid) => (people || []).find((p) => p.id === uid)?.name || "")
+                            .filter(Boolean);
+                          const title = names.length ? names.join(", ") : `Visto por ${readerIds.length}`;
+                          return <StatusTicks read={true} title={title} />;
+                        })()
+                      )}
                       <button
                         type="button"
                         title={isFav(m.id) ? "Remover favorito" : "Favoritar"}
@@ -2982,31 +3064,87 @@ function MessageText({ message, mine, editingId, editText, setEditText, onStartE
   );
 }
 
-function Avatar({ url, name, size = 28 }) {
-  const style = {
+function StatusTicks({ read, title }) {
+  // WhatsApp-like double check icon. Branco quando visualizado, cinza quando entregue
+  const color = read ? '#ffffff' : '#94a3b8';
+  const outline = read ? 'rgba(0,0,0,0.35)' : 'none';
+  const strokeMain = 2.2;
+  const strokeOutline = read ? 3.2 : 0;
+  return (
+    <span title={title} aria-label={title} className="inline-flex items-center ml-1">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M7 13l-2 2 3 3 2-2-3-3z" fill={color} opacity="0.0"/>
+        {read && (
+          <>
+            {/* Outline (sombra) para contraste em fundos claros */}
+            <path d="M1.5 13.5l4 4 7-7" stroke={outline} strokeWidth={strokeOutline} strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M8.5 13.5l4 4 9-9" stroke={outline} strokeWidth={strokeOutline} strokeLinecap="round" strokeLinejoin="round"/>
+          </>
+        )}
+        {/* Traço principal */}
+        <path d="M1.5 13.5l4 4 7-7" stroke={color} strokeWidth={strokeMain} strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M8.5 13.5l4 4 9-9" stroke={color} strokeWidth={strokeMain} strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    </span>
+  );
+}
+
+function Avatar({ url, name, size = 28, status, showStatus = false }) {
+  const containerStyle = {
+    position: 'relative',
     width: size,
     height: size,
-    borderRadius: "50%",
-    objectFit: "cover",
-    flexShrink: 0,
+    display: 'inline-block',
   };
-  if (url)
-    return <img src={absUrl(url)} alt={name || "avatar"} style={style} />;
-  const initials = (name || "U").trim().slice(0, 2).toUpperCase();
+  const imgStyle = {
+    width: size,
+    height: size,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    flexShrink: 0,
+    display: 'block',
+  };
+  const initials = (name || 'U').trim().slice(0, 2).toUpperCase();
+  const dotColor = (() => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'online') return '#16a34a'; // green-600
+    if (s === 'busy' || s === 'ocupado') return '#dc2626'; // red-600
+    if (s === 'away' || s === 'ausente') return '#f59e0b'; // amber-500
+    return '#94a3b8'; // slate-400 (offline/unknown)
+  })();
+  const dotSize = Math.max(8, Math.floor(size * 0.32));
+  const dotStyle = {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: dotSize,
+    height: dotSize,
+    borderRadius: '50%',
+    background: dotColor,
+    border: '2px solid rgba(255,255,255,0.95)',
+    boxShadow: '0 0 0 1px rgba(15,23,42,0.08)',
+  };
   return (
-    <div
-      style={{
-        ...style,
-        background: "#cbd5e1",
-        color: "#334155",
-        display: "grid",
-        placeItems: "center",
-        fontSize: 12,
-        fontWeight: "bold",
-      }}
-    >
-      {initials}
-    </div>
+    <span style={containerStyle}>
+      {url ? (
+        <img src={absUrl(url)} alt={name || 'avatar'} style={imgStyle} />
+      ) : (
+        <div
+          style={{
+            ...imgStyle,
+            background: '#cbd5e1',
+            color: '#334155',
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: Math.max(10, Math.floor(size * 0.42)),
+            fontWeight: 'bold',
+          }}
+        >
+          {initials}
+        </div>
+      )}
+      {showStatus && <span style={dotStyle} />}
+    </span>
   );
 }
 

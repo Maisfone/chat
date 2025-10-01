@@ -24,6 +24,36 @@ const io = new SocketIOServer(server, {
   cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
 });
 
+// In-memory presence map: userId => { count, status }
+const presence = new Map();
+function setOnline(userId, status = "online") {
+  if (!userId) return;
+  const cur = presence.get(userId) || { count: 0, status: "offline" };
+  const next = { count: (cur.count || 0) + 1, status: status || cur.status || "online" };
+  presence.set(userId, next);
+  if ((cur.count || 0) === 0) {
+    try { io.emit("presence:update", { userId, status: next.status || "online" }); } catch {}
+  }
+}
+function setStatus(userId, status = "online") {
+  if (!userId) return;
+  const cur = presence.get(userId) || { count: 0, status: "offline" };
+  const next = { count: cur.count || 0, status: status || "online" };
+  presence.set(userId, next);
+  try { io.emit("presence:update", { userId, status: next.status }); } catch {}
+}
+function setOffline(userId) {
+  if (!userId) return;
+  const cur = presence.get(userId) || { count: 0, status: "offline" };
+  const count = Math.max(0, (cur.count || 1) - 1);
+  if (count === 0) {
+    presence.set(userId, { count: 0, status: "offline" });
+    try { io.emit("presence:update", { userId, status: "offline" }); } catch {}
+  } else {
+    presence.set(userId, { count, status: cur.status || "online" });
+  }
+}
+
 // Disponibiliza io nas rotas
 app.use((req, res, next) => {
   req.io = io;
@@ -97,6 +127,40 @@ io.on("connection", (socket) => {
     try {
       socket.broadcast.emit("sip:reg", payload);
     } catch {}
+  });
+
+  // Presence: client should emit presence:online with { userId, status }
+  socket.on("presence:online", (payload = {}) => {
+    try {
+      const userId = payload.userId;
+      const status = payload.status || "online";
+      socket.data.userId = userId;
+      socket.data.status = status;
+      setOnline(userId, status);
+      // send snapshot back
+      const users = [];
+      presence.forEach((v, k) => { if ((v?.count || 0) > 0) users.push({ userId: k, status: v.status || "online" }); });
+      socket.emit("presence:snapshot", { users });
+    } catch {}
+  });
+  // Update status (busy/away)
+  socket.on("presence:set", (payload = {}) => {
+    try {
+      const status = payload.status || "online";
+      const userId = socket.data.userId || payload.userId;
+      setStatus(userId, status);
+      socket.data.status = status;
+    } catch {}
+  });
+  socket.on("presence:who", () => {
+    try {
+      const users = [];
+      presence.forEach((v, k) => { if ((v?.count || 0) > 0) users.push({ userId: k, status: v.status || "online" }); });
+      socket.emit("presence:snapshot", { users });
+    } catch {}
+  });
+  socket.on("disconnect", () => {
+    try { setOffline(socket.data?.userId); } catch {}
   });
 });
 

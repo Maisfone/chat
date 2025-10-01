@@ -115,6 +115,22 @@ export default function App() {
     return () => { window.removeEventListener('chat:iconUpdated', onIcon); window.removeEventListener('chat:bgUpdated', onBg) }
   }, [])
 
+  // Presence: announce online and propagate status changes
+  useEffect(() => {
+    const s = ioClient();
+    const uid = getUser()?.id;
+    if (!uid) return;
+    try { s.emit('presence:online', { userId: uid, status }) } catch {}
+  // run on mount and when user changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
+  useEffect(() => {
+    const s = ioClient();
+    const uid = getUser()?.id;
+    if (!uid) return;
+    try { s.emit('presence:set', { status }) } catch {}
+  }, [status])
+
   useEffect(() => {
     if (!menuOpen) return
 
@@ -410,6 +426,26 @@ export default function App() {
                 <div className="font-semibold text-sm truncate">{user?.name || 'Meu perfil'}</div>
                 <div className="text-xs text-slate-500 capitalize">Status: {status}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-1 mr-2">
+                    <button
+                      type="button"
+                      className={`px-2 py-0.5 rounded text-xs border ${status==='online' ? 'bg-green-600 text-white border-green-600' : 'border-slate-300 hover:bg-slate-50'}`}
+                      onClick={() => saveStatus('online')}
+                      title="Definir como Online"
+                    >Online</button>
+                    <button
+                      type="button"
+                      className={`px-2 py-0.5 rounded text-xs border ${status==='ausente' ? 'bg-amber-500 text-white border-amber-500' : 'border-slate-300 hover:bg-slate-50'}`}
+                      onClick={() => saveStatus('ausente')}
+                      title="Definir como Ausente"
+                    >Ausente</button>
+                    <button
+                      type="button"
+                      className={`px-2 py-0.5 rounded text-xs border ${status==='ocupado' ? 'bg-red-600 text-white border-red-600' : 'border-slate-300 hover:bg-slate-50'}`}
+                      onClick={() => saveStatus('ocupado')}
+                      title="Definir como Ocupado"
+                    >Ocupado</button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setMenuOpen((v) => !v)}
