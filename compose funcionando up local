@@ -1,0 +1,56 @@
+networks:
+  minha_rede:
+    external: true
+
+services:
+  server:
+    image: mtinformatica/farmachat:server
+    container_name: farmachat-server
+    environment:
+      DATABASE_URL: postgres://postgres:1oBH87s3FXk8uPfwTUIxMgxu6rJprfsF@postgres:5432/db
+      PORT: 3000
+      JWT_SECRET: 270424@Mel
+      PUBLIC_BASE_URL: https://apichat.farmacon.com.br
+      # Opcional para CORS mais restrito:
+      # CORS_ORIGIN: https://chat.farmacon.com.br
+    networks:
+      - minha_rede
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      - traefik.http.routers.farmachat-api.rule=Host(`apichat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-api.entrypoints=web
+      - traefik.http.middlewares.farmachat-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.farmachat-api.middlewares=farmachat-redirect
+      - traefik.http.routers.farmachat-api-secure.rule=Host(`apichat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-api-secure.entrypoints=websecure
+      - traefik.http.routers.farmachat-api-secure.tls=true
+      - traefik.http.routers.farmachat-api-secure.tls.certresolver=le
+      - traefik.http.routers.farmachat-api.service=farmachat-api
+      - traefik.http.routers.farmachat-api-secure.service=farmachat-api
+      - traefik.http.services.farmachat-api.loadbalancer.server.port=3000
+    restart: unless-stopped
+    command: sh -c "npx prisma migrate deploy && node src/index.js"
+
+  cliente:
+    image: mtinformatica/farmachat:client
+    container_name: farmachat-client
+    depends_on:
+      - server
+    networks:
+      - minha_rede
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      - traefik.http.routers.farmachat-web.rule=Host(`chat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-web.entrypoints=web
+      - traefik.http.middlewares.farmachat-redirect.redirectscheme.scheme=https
+      - traefik.http.routers.farmachat-web.middlewares=farmachat-redirect
+      - traefik.http.routers.farmachat-web-secure.rule=Host(`chat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-web-secure.entrypoints=websecure
+      - traefik.http.routers.farmachat-web-secure.tls=true
+      - traefik.http.routers.farmachat-web-secure.tls.certresolver=le
+      - traefik.http.routers.farmachat-web.service=farmachat-web
+      - traefik.http.routers.farmachat-web-secure.service=farmachat-web
+      - traefik.http.services.farmachat-web.loadbalancer.server.port=80
+    restart: unless-stopped
