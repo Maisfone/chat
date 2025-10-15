@@ -2932,6 +2932,23 @@ export default function Chat() {
           </div>
         )}
 
+        {file && (
+          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900 flex items-center gap-3">
+            <div className="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300">
+              <span className="font-medium text-slate-800 dark:text-slate-100">Anexo:</span>{" "}
+              <span title={file.name}>{file.name}</span>
+            </div>
+            <button
+              type="button"
+              className="text-slate-500 hover:text-red-600 text-sm"
+              onClick={() => setFile(null)}
+              aria-label="Remover anexo"
+            >
+              Remover
+            </button>
+          </div>
+        )}
+
         <form
           onSubmit={sendMessage}
           className={`flex gap-2 p-2 border-t border-slate-200 items-center relative bg-white/80 dark:bg-slate-900/60 backdrop-blur ${
@@ -2950,7 +2967,9 @@ export default function Chat() {
           <button
             type="button"
             onClick={() => {
-              try { if (fileInputRef.current) fileInputRef.current.value = "" } catch {}
+              try {
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              } catch {}
               fileInputRef.current?.click();
             }}
             title="Anexar"
@@ -2958,10 +2977,19 @@ export default function Chat() {
             aria-label="Anexar"
             style={{ fontSize: 0 }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-5 h-5"
+            >
               <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
             </svg>
-            📎
+            <span className="sr-only">Anexar arquivo</span>
           </button>
           <input
             ref={fileInputRef}
@@ -2970,21 +2998,7 @@ export default function Chat() {
             onChange={(e) => setFile(e.target.files?.[0] || null)}
             className="hidden"
           />
-          {file && (
-            <div className="max-w-[45%] truncate text-xs text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700/60 rounded px-2 py-1 flex items-center gap-2">
-              <span className="truncate" title={file.name}>
-                {file.name}
-              </span>
-              <button
-                type="button"
-                className="text-slate-500 hover:text-red-600"
-                onClick={() => setFile(null)}
-              >
-                ✕
-              </button>
-            </div>
-          )}
-          <textarea
+                    <textarea
             ref={inputRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
