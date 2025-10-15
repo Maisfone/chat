@@ -188,6 +188,27 @@ export default function Chat() {
     } catch {}
   }
 
+  async function downloadAttachment(url, filename = "arquivo") {
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (!response.ok) throw new Error("Falha ao baixar arquivo");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) {
+      setErr(e?.message || "Não foi possível baixar o arquivo");
+      try {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch {}
+    }
+  }
+
   useEffect(() => {
     if (!menuFor) return;
 
@@ -2811,11 +2832,33 @@ export default function Chat() {
                         setEditText={setEditText}
                       />
                     ) : m.type === "image" || m.type === "gif" ? (
-                      <img
-                        src={absUrl(m.content)}
-                        alt="imagem"
-                        className="max-w-full rounded"
-                      />
+                      (() => {
+                        const imageUrl = absUrl(m.content);
+                        const imageName = fileNameFromUrl(m.content) || "imagem";
+                        return (
+                          <div className="flex flex-col gap-2 items-start">
+                            <a
+                              href={imageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block max-w-[220px]"
+                            >
+                              <img
+                                src={imageUrl}
+                                alt={imageName}
+                                className="max-w-full max-h-60 rounded shadow-sm object-contain bg-slate-100"
+                              />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => downloadAttachment(imageUrl, imageName)}
+                              className="inline-flex items-center gap-1 rounded px-3 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400 transition"
+                            >
+                              Baixar
+                            </button>
+                          </div>
+                        );
+                      })()
                     ) : m.type === "audio" ? (
                       <audio
                         src={absUrl(m.content)}
