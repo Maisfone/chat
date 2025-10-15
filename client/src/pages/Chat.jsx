@@ -20,7 +20,7 @@ export default function Chat() {
   // Messages and composer
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-  const [file, setFile] = useState(null);
+  const [attachments, setAttachments] = useState([]);
   const [err, setErr] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   // Audio recording
@@ -128,6 +128,65 @@ export default function Chat() {
   const nav = useNavigate();
   const [recPendingFile, setRecPendingFile] = useState(null);
   const [recPreviewUrl, setRecPreviewUrl] = useState("");
+  const attachmentsRef = useRef([]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach((item) => {
+        if (item?.preview) {
+          try {
+            URL.revokeObjectURL(item.preview);
+          } catch {}
+        }
+      });
+    };
+  }, []);
+
+  function createAttachment(file) {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      preview: file?.type?.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null,
+    };
+  }
+
+  function addAttachments(newFiles = []) {
+    if (!newFiles.length) return;
+    const mapped = newFiles.map((f) => createAttachment(f));
+    setAttachments((prev) => [...prev, ...mapped]);
+  }
+
+  function removeAttachment(id) {
+    setAttachments((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.preview) {
+        try {
+          URL.revokeObjectURL(target.preview);
+        } catch {}
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  }
+
+  function clearAttachments() {
+    attachmentsRef.current.forEach((item) => {
+      if (item?.preview) {
+        try {
+          URL.revokeObjectURL(item.preview);
+        } catch {}
+      }
+    });
+    setAttachments([]);
+    try {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {}
+  }
 
   useEffect(() => {
     if (!menuFor) return;
@@ -1080,51 +1139,57 @@ export default function Chat() {
     if (e && e.preventDefault) e.preventDefault();
     setErr("");
     if (!active) return;
-    try {
-      const hasText = Boolean((text || "").trim());
-      const hasFile = Boolean(file);
-      if (hasText) {
-        const content = text; // preserve user formatting (line breaks, spaces)
-        const isUrl = /^(https?:\/\/\S+)/i.test(content);
-        const lower = content.toLowerCase();
-        const isGif = isUrl && /(\.gif($|\?))/i.test(lower);
+      try {
+        const hasText = Boolean((text || "").trim());
+        const hasFiles = attachments.length > 0;
+        const replyId = replyTo?.id || null;
+        if (hasText) {
+          const content = text; // preserve user formatting (line breaks, spaces)
+          const isUrl = /^(https?:\/\/\S+)/i.test(content);
+          const lower = content.toLowerCase();
+          const isGif = isUrl && /(\.gif($|\?))/i.test(lower);
         const isImg =
           isUrl && /(\.png|\.jpg|\.jpeg|\.webp|\.bmp|\.svg)($|\?)/i.test(lower);
         const type = isGif ? "gif" : isImg ? "image" : "text";
-        const created = await api.post(`/messages/${active.id}`, {
-          type,
-          content,
-          replyToId: replyTo?.id || null,
-        });
-        setMessages((prev) => {
-          if ((prev || []).some((m) => m.id === created.id)) return prev;
-          return [...prev, created];
-        });
-        setText("");
-        setReplyTo(null);
+          const created = await api.post(`/messages/${active.id}`, {
+            type,
+            content,
+            replyToId: replyId,
+          });
+          setMessages((prev) => {
+            if ((prev || []).some((m) => m.id === created.id)) return prev;
+            return [...prev, created];
+          });
+          setText("");
+        }
+        if (hasFiles) {
+          for (const item of attachments) {
+            const attachmentFile = item?.file;
+            if (!attachmentFile) continue;
+            const form = new FormData();
+            form.append("file", attachmentFile);
+            let kind = "file";
+            if (attachmentFile.type?.startsWith("audio")) kind = "audio";
+            else if (attachmentFile.type?.startsWith("image")) kind = "image";
+            const q = replyId ? `&replyToId=${replyId}` : "";
+            const createdUpload = await api.upload(
+              `/messages/${active.id}/upload?type=${kind}${q}`,
+              form
+            );
+            setMessages((prev) => {
+              if ((prev || []).some((m) => m.id === createdUpload.id)) return prev;
+              return [...prev, createdUpload];
+            });
+          }
+          clearAttachments();
+        }
+        if (hasText || hasFiles) {
+          setReplyTo(null);
+        }
+      } catch (e) {
+        setErr(e.message || "Falha ao enviar mensagem");
       }
-      if (hasFile) {
-        const form = new FormData();
-        form.append("file", file);
-        let kind = "file";
-        if (file.type?.startsWith("audio")) kind = "audio";
-        else if (file.type?.startsWith("image")) kind = "image";
-        const q = replyTo?.id ? `&replyToId=${replyTo.id}` : "";
-        const created2 = await api.upload(
-          `/messages/${active.id}/upload?type=${kind}${q}`,
-          form
-        );
-        setMessages((prev) => {
-          if ((prev || []).some((m) => m.id === created2.id)) return prev;
-          return [...prev, created2];
-        });
-        setFile(null);
-        setReplyTo(null);
-      }
-    } catch (e) {
-      setErr(e.message || "Falha ao enviar mensagem");
     }
-  }
 
   function startReply(m) {
     setReplyTo(m);
@@ -2932,20 +2997,51 @@ export default function Chat() {
           </div>
         )}
 
-        {file && (
-          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900 flex items-center gap-3">
-            <div className="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300">
-              <span className="font-medium text-slate-800 dark:text-slate-100">Anexo:</span>{" "}
-              <span title={file.name}>{file.name}</span>
-            </div>
-            <button
-              type="button"
-              className="text-slate-500 hover:text-red-600 text-sm"
-              onClick={() => setFile(null)}
-              aria-label="Remover anexo"
-            >
-              Remover
-            </button>
+        {attachments.length > 0 && (
+          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900 flex flex-wrap gap-3">
+            {attachments.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-3 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-slate-50 dark:bg-slate-800/50"
+              >
+                {item.preview ? (
+                  <img
+                    src={item.preview}
+                    alt={item.file.name}
+                    className="w-16 h-16 object-cover rounded border border-slate-200 dark:border-slate-600"
+                  />
+                ) : (
+                  <div className="w-16 h-16 flex items-center justify-center rounded border border-dashed border-slate-300 bg-slate-100 dark:bg-slate-700/40 text-[11px] font-semibold text-slate-600 dark:text-slate-200">
+                    {item.file.type?.startsWith("audio")
+                      ? "Áudio"
+                      : item.file.type?.startsWith("video")
+                      ? "Vídeo"
+                      : item.file.type?.includes("pdf")
+                      ? "PDF"
+                      : "Arquivo"}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div
+                    className="truncate text-xs font-medium text-slate-700 dark:text-slate-200"
+                    title={item.file.name}
+                  >
+                    {item.file.name}
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                    {((item.file.size || 0) / (1024 * 1024)).toFixed(2)} MB
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="text-slate-500 hover:text-red-600 text-sm"
+                  onClick={() => removeAttachment(item.id)}
+                  aria-label={`Remover anexo ${item.file.name}`}
+                >
+                  Remover
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -2994,8 +3090,12 @@ export default function Chat() {
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             accept="*/*"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              const selected = Array.from(e.target.files || []);
+              addAttachments(selected);
+            }}
             className="hidden"
           />
                     <textarea
@@ -3018,7 +3118,7 @@ export default function Chat() {
                     if (blob) {
                       const fname = `paste-${Date.now()}.${(blob.type.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")}`;
                       const f = new File([blob], fname, { type: blob.type || "image/png" });
-                      setFile(f);
+                      addAttachments([f]);
                       // opcional: não impedir colagem de texto quando imagem
                       e.preventDefault();
                       break;
@@ -3034,28 +3134,28 @@ export default function Chat() {
           <button
             type="button"
             onClick={() => {
-              if ((text || "").trim() || file) {
+              if ((text || "").trim() || attachments.length) {
                 sendMessage();
               } else {
                 recording ? stopRecording() : startRecording();
               }
             }}
             className={`${
-              (text || "").trim() || file
+              (text || "").trim() || attachments.length
                 ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
                 : recording
                 ? "bg-red-600 text-white hover:bg-red-700 shadow"
                 : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
             } inline-flex items-center justify-center rounded-full w-10 h-10`}
             title={
-              (text || "").trim() || file
+              (text || "").trim() || attachments.length
                 ? "Enviar"
                 : recording
                 ? "Parar gravação"
                 : "Gravar áudio"
             }
           >
-            {(text || "").trim() || file ? (
+            {(text || "").trim() || attachments.length ? (
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
