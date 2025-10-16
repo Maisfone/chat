@@ -14,8 +14,10 @@ import phoneRoutes from "./routes/phone.js";
 import meetingRoutes from "./routes/meetings.js";
 import configRoutes from "./routes/config.js";
 import pushRoutes from "./routes/push.js";
+import { setVapidFromEnv } from "./lib/push.js";
 
 dotenv.config();
+setVapidFromEnv();
 
 const app = express();
 app.set("trust proxy", true);

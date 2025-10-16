@@ -2,6 +2,9 @@ import fs from 'fs'
 import path from 'path'
 import webpush from 'web-push'
 
+const DEFAULT_VAPID_PUBLIC_KEY = 'BLX4iWgrhNgMUBR7yYLSu_LLHgE0ZbrFlrY9UBd3hGAfXc6SrOTcsVf2tdI1hJEzcXG3cg8NFIkNmvDXIK8sKm0'
+const DEFAULT_VAPID_PRIVATE_KEY = 'wz5_vyjA5OiSNF5G_Ogz57fsvo-87HCJXkfb4z_cyR0'
+
 const DATA_DIR = process.env.CONFIG_DIR || 'data'
 const FILE = path.join(DATA_DIR, 'push-subscriptions.json')
 
@@ -13,16 +16,16 @@ function readAll() {
 function writeAll(map) { ensureDir(); try { fs.writeFileSync(FILE, JSON.stringify(map, null, 2)) } catch {} }
 
 export function setVapidFromEnv() {
-  const pub = process.env.VAPID_PUBLIC_KEY
-  const priv = process.env.VAPID_PRIVATE_KEY
+  const pub = process.env.VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY
+  const priv = process.env.VAPID_PRIVATE_KEY || DEFAULT_VAPID_PRIVATE_KEY
   const subject = process.env.VAPID_SUBJECT || 'mailto:admin@example.com'
-  if (pub && priv) {
-    try { webpush.setVapidDetails(subject, pub, priv) } catch {}
-  }
+  if (!process.env.VAPID_PUBLIC_KEY) process.env.VAPID_PUBLIC_KEY = pub
+  if (!process.env.VAPID_PRIVATE_KEY) process.env.VAPID_PRIVATE_KEY = priv
+  try { webpush.setVapidDetails(subject, pub, priv) } catch {}
 }
 
 export function getVapidPublicKey() {
-  return process.env.VAPID_PUBLIC_KEY || ''
+  return process.env.VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY
 }
 
 export function saveSubscription(userId, subscription) {
