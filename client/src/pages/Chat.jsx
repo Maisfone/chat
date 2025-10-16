@@ -10,6 +10,8 @@ import { api, absUrl } from "../services/api.js";
 import { ioClient } from "../services/socket.js";
 import { getUser } from "../state/auth.js";
 
+const TOASTS_ENABLED = false;
+
 export default function Chat() {
   // Lists and active conversation
   const [groups, setGroups] = useState([]);
@@ -263,6 +265,7 @@ export default function Chat() {
   const toastTimeouts = useRef(new Map());
   const soundOn = true;
   const enqueueToast = useCallback((payload) => {
+    if (!TOASTS_ENABLED) return;
     let createdId = "";
     setToasts((prev) => {
       if (
@@ -917,7 +920,7 @@ export default function Chat() {
           name: dm.other?.name || "Direto",
           avatarUrl: dm.other?.avatarUrl || undefined,
         });
-        if (closeDrawer) setLeftOpen(false);
+        if (closeDrawer || leftOpen) setLeftOpen(false);
         return;
       }
     } catch {}
@@ -945,7 +948,7 @@ export default function Chat() {
           name: dm.other?.name || "Direto",
           avatarUrl: dm.other?.avatarUrl || undefined,
         });
-        if (closeDrawer) setLeftOpen(false);
+        if (closeDrawer || leftOpen) setLeftOpen(false);
         return;
       }
     } catch (e) {
@@ -986,7 +989,7 @@ export default function Chat() {
         const mine = (msg.author?.id || msg.authorId) === user?.id;
         const isActive = msg.groupId === active.id;
         const isMuted = !!muted?.[msg.groupId];
-        const shouldToast = (() => {
+        const shouldToast = TOASTS_ENABLED && (() => {
           try {
             return (!windowFocused || document.hidden) && !mine;
           } catch {
@@ -1692,8 +1695,45 @@ export default function Chat() {
     })();
   }, [groups]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 767px)");
+    const syncDrawer = (matches) => {
+      if (matches && !active) {
+        setLeftOpen(true);
+      } else if (!matches) {
+        setLeftOpen(false);
+      }
+    };
+    syncDrawer(media.matches);
+    const onChange = (event) => syncDrawer(event.matches);
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+    } else {
+      media.addListener(onChange);
+    }
+    return () => {
+      if (typeof media.removeEventListener === "function") {
+        media.removeEventListener("change", onChange);
+      } else {
+        media.removeListener(onChange);
+      }
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const openDrawer = () => setLeftOpen(true);
+    window.addEventListener("chat:openDrawer", openDrawer);
+    return () => window.removeEventListener("chat:openDrawer", openDrawer);
+  }, []);
+
   return (
-    <div className="relative flex h-full">
+    <div
+      className={`relative flex h-full min-h-full w-full flex-col md:flex-row ${
+        leftOpen || rightOpen ? "overflow-hidden" : ""
+      }`}
+    >
       {toasts.length > 0 && (
         <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col gap-3">
           {toasts.map((toast) => (
@@ -1756,14 +1796,14 @@ export default function Chat() {
             </div>
           ))}
         </div>
-      )}{" "}
+      )}
       {leftOpen && (
         <>
           <div
             className="absolute inset-0 bg-black/20 z-10"
             onClick={() => setLeftOpen(false)}
           />
-          <div className="absolute inset-y-0 left-0 w-80 border-r border-slate-200 bg-white flex flex-col overflow-auto z-20">
+          <div className="absolute inset-y-0 left-0 z-20 flex w-full max-w-xs flex-col overflow-y-auto border-r border-slate-200 bg-white shadow-lg md:hidden">
             <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2">
               <input
                 value={convQuery}
@@ -1932,7 +1972,7 @@ export default function Chat() {
         </>
       )}
       {/* Desktop sidebar */}
-      <div className="hidden md:flex w-80 border-r border-slate-200 flex-col overflow-auto">
+      <div className="hidden md:flex md:w-64 lg:w-72 xl:w-80 flex-col border-r border-slate-200/80 bg-white/80 dark:bg-slate-900/40 backdrop-blur-sm overflow-y-auto min-h-0">
         <div className="px-3 py-2 border-b border-slate-200">
           <input
             value={convQuery}
@@ -2065,7 +2105,7 @@ export default function Chat() {
         </div>
       </div>
       {/* Conversation area */}
-      <div className="flex-1 flex flex-col chat-bg">
+      <div className="flex-1 flex min-h-0 flex-col chat-bg">
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           <button
             type="button"
@@ -2724,7 +2764,7 @@ export default function Chat() {
 
         <div
           ref={listRef}
-          className={`flex-1 overflow-auto p-4 space-y-3 ${
+          className={`flex-1 overflow-y-auto overscroll-contain p-4 space-y-3 ${
             !active ? "hidden" : ""
           }`}
         >
@@ -2782,7 +2822,7 @@ export default function Chat() {
                     }`}
                   >
                     {!mine && (
-                      <div className="text-xs font-semibold text-slate-600 mb-1">
+                      <div className="mb-1 text-xs font-semibold text-slate-600">
                         {m.author?.name || "Contato"}
                       </div>
                     )}
@@ -3041,7 +3081,7 @@ export default function Chat() {
         )}
 
         {attachments.length > 0 && (
-          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900 flex flex-wrap gap-3">
+          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900 flex flex-wrap gap-3 overflow-x-auto">
             {attachments.map((item) => (
               <div
                 key={item.id}
@@ -3090,155 +3130,154 @@ export default function Chat() {
 
         <form
           onSubmit={sendMessage}
-          className={`flex gap-2 p-2 border-t border-slate-200 items-center relative bg-white/80 dark:bg-slate-900/60 backdrop-blur ${
+          className={`chat-composer relative flex flex-col gap-2 p-3 border-t border-slate-200/70 bg-white/90 dark:bg-slate-900/70 backdrop-blur ${
             !active ? "hidden" : ""
           }`}
         >
-          <button
-            type="button"
-            onClick={() => setShowEmoji((v) => !v)}
-            title="Emojis"
-            className="px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-            aria-label="Emojis"
-          >
-            😊
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                if (fileInputRef.current) fileInputRef.current.value = "";
-              } catch {}
-              fileInputRef.current?.click();
-            }}
-            title="Anexar"
-            className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-            aria-label="Anexar"
-            style={{ fontSize: 0 }}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5"
+          <div className="flex w-full items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowEmoji((v) => !v)}
+              title="Emojis"
+              className="flex-shrink-0 px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
+              aria-label="Emojis"
             >
-              <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
-            </svg>
-            <span className="sr-only">Anexar arquivo</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="*/*"
-            onChange={(e) => {
-              const selected = Array.from(e.target.files || []);
-              addAttachments(selected);
-            }}
-            className="hidden"
-          />
-                    <textarea
-            ref={inputRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
-            onPaste={(e) => {
-              try {
-                const items = e.clipboardData?.items || [];
-                for (let i = 0; i < items.length; i++) {
-                  const it = items[i];
-                  if (it && typeof it.type === "string" && it.type.startsWith("image/")) {
-                    const blob = it.getAsFile();
-                    if (blob) {
-                      const fname = `paste-${Date.now()}.${(blob.type.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")}`;
-                      const f = new File([blob], fname, { type: blob.type || "image/png" });
-                      addAttachments([f]);
-                      // opcional: não impedir colagem de texto quando imagem
-                      e.preventDefault();
-                      break;
+              😊
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                } catch {}
+                fileInputRef.current?.click();
+              }}
+              title="Anexar"
+              className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
+              aria-label="Anexar"
+              style={{ fontSize: 0 }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-5 h-5"
+              >
+                <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
+              </svg>
+              <span className="sr-only">Anexar arquivo</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="*/*"
+              onChange={(e) => {
+                const selected = Array.from(e.target.files || []);
+                addAttachments(selected);
+              }}
+              className="hidden"
+            />
+            <textarea
+              ref={inputRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              onPaste={(e) => {
+                try {
+                  const items = e.clipboardData?.items || [];
+                  for (let i = 0; i < items.length; i++) {
+                    const it = items[i];
+                    if (it && typeof it.type === "string" && it.type.startsWith("image/")) {
+                      const blob = it.getAsFile();
+                      if (blob) {
+                        const fname = `paste-${Date.now()}.${(blob.type.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")}`;
+                        const f = new File([blob], fname, { type: blob.type || "image/png" });
+                        addAttachments([f]);
+                        e.preventDefault();
+                        break;
+                      }
                     }
                   }
+                } catch {}
+              }}
+              placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
+              rows={2}
+              className="flex-1 min-w-0 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 resize-y min-h-[48px]"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if ((text || "").trim() || attachments.length) {
+                  sendMessage();
+                } else {
+                  recording ? stopRecording() : startRecording();
                 }
-              } catch {}
-            }}
-            placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
-            rows={2}
-            className="flex-1 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 resize-y min-h-[48px]"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if ((text || "").trim() || attachments.length) {
-                sendMessage();
-              } else {
-                recording ? stopRecording() : startRecording();
+              }}
+              className={`${
+                (text || "").trim() || attachments.length
+                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
+                  : recording
+                  ? "bg-red-600 text-white hover:bg-red-700 shadow"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
+              } inline-flex items-center justify-center rounded-full w-10 h-10 flex-shrink-0`}
+              title={
+                (text || "").trim() || attachments.length
+                  ? "Enviar"
+                  : recording
+                  ? "Parar gravação"
+                  : "Gravar áudio"
               }
-            }}
-            className={`${
-              (text || "").trim() || attachments.length
-                ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
-                : recording
-                ? "bg-red-600 text-white hover:bg-red-700 shadow"
-                : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
-            } inline-flex items-center justify-center rounded-full w-10 h-10`}
-            title={
-              (text || "").trim() || attachments.length
-                ? "Enviar"
-                : recording
-                ? "Parar gravação"
-                : "Gravar áudio"
-            }
-          >
-            {(text || "").trim() || attachments.length ? (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="w-5 h-5"
-              >
-                <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z" />
-              </svg>
-            ) : recording ? (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="w-5 h-5"
-              >
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-            ) : (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="w-5 h-5"
-              >
-                <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V7a3.5 3.5 0 1 0-7 0v4a3.5 3.5 0 0 0 3.5 3.5Zm5-3.5a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20h2v-2.08A7 7 0 0 0 19 11h-2Z" />
-              </svg>
-            )}
-          </button>
+            >
+              {(text || "").trim() || attachments.length ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z" />
+                </svg>
+              ) : recording ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V7a3.5 3.5 0 1 0-7 0v4a3.5 3.5 0 0 0 3.5 3.5Zm5-3.5a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20h2v-2.08A7 7 0 0 0 19 11h-2Z" />
+                </svg>
+              )}
+            </button>
+          </div>
           {recording && (
-            <span className="text-xs text-red-600 min-w-[60px]">
+            <span className="text-xs text-red-600">
               ⏺ {recTime}s
             </span>
           )}
-          {err && <div className="text-red-600 text-sm ml-2">{err}</div>}
-          {recError && (
-            <div className="text-red-600 text-sm ml-2">{recError}</div>
-          )}
+          {err && <div className="text-sm text-red-600">{err}</div>}
+          {recError && <div className="text-sm text-red-600">{recError}</div>}
 
           {showEmoji && (
-            <div className="absolute bottom-12 left-2 bg-white border border-slate-200 rounded-md p-2 shadow max-w-[280px] z-10">
+            <div className="absolute bottom-14 left-2 bg-white border border-slate-200 rounded-md p-2 shadow max-w-[280px] z-10">
               <div className="grid grid-cols-8 gap-1">
                 {emojis.map((e) => (
                   <button
@@ -3384,4 +3423,5 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
 }
 
 // Helpers for right sidebar (defined after component and hoisted above via closures)
+
 

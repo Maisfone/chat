@@ -37,6 +37,12 @@ function broadcastAlertSound(req, cfg) {
   } catch {}
 }
 
+function broadcastChatIcon(req, url) {
+  try {
+    req.io?.emit?.('config:chat-icon', { url: url || null })
+  } catch {}
+}
+
 // Admin: full config
 router.get('/', adminRequired, (req, res) => {
   res.json(readConfig())
@@ -57,6 +63,9 @@ router.patch('/', adminRequired, (req, res) => {
   }
   const cfg = updateConfig(patch)
   broadcastAlertSound(req, cfg)
+  if (Object.prototype.hasOwnProperty.call(patch, 'chatIconUrl')) {
+    broadcastChatIcon(req, cfg.chatIconUrl || null)
+  }
   res.json(cfg)
 })
 
@@ -66,6 +75,7 @@ router.post('/icon', adminRequired, uploadIcon, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
     const cfg = updateConfig({ chatIconUrl: req.file.url })
+    broadcastChatIcon(req, cfg.chatIconUrl || null)
     res.json({ ok: true, chatIconUrl: cfg.chatIconUrl })
   } catch (e) {
     res.status(500).json({ error: 'Falha ao salvar ícone' })
