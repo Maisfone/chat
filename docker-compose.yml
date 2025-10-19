@@ -21,7 +21,10 @@ services:
       DATABASE_URL: "postgresql://postgres:270424@db:5432/db?schema=public"
       JWT_SECRET: "dev-local-secret-change-me"
       CORS_ORIGIN: "http://localhost,http://localhost:80,http://localhost:5173"
+      UPLOAD_DIR: "/app/uploads"
     command: sh -c "npx prisma migrate deploy && npm start"
+    volumes:
+      - server_uploads:/app/uploads
     healthcheck:
       test:
         [
@@ -53,3 +56,4 @@ services:
 
 volumes:
   postgres_data:
+  server_uploads:
