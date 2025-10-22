@@ -37,10 +37,19 @@ async function handle(res) {
   return res.text();
 }
 
+function buildUrlWithCacheBust(path) {
+  const base = `${API_BASE}${path}`;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}_=${Date.now()}`;
+}
+
 export const api = {
   get: (path) =>
-    fetch(`${API_BASE}${path}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
+    fetch(buildUrlWithCacheBust(path), {
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+      },
+      cache: "no-store",
     }).then(handleAuth),
   post: (path, body) =>
     fetch(`${API_BASE}${path}`, {
@@ -106,6 +115,7 @@ export function absUrl(u) {
 
 // Auth-aware response handler: auto-logout on 401
 async function handleAuth(res) {
+  if (res.status === 304) return null;
   if (!res.ok) {
     const t = await res.text();
     let msg;

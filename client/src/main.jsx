@@ -56,9 +56,26 @@ createRoot(document.getElementById("root")).render(
     </BrowserRouter>
   </React.StrictMode>
 );
-// Register Service Worker for Web Push
-if ('serviceWorker' in navigator) {
+// Registra o Service Worker apenas em produção para evitar conflitos durante o desenvolvimento.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    try { navigator.serviceWorker.register('/sw.js') } catch {}
-  })
+    try {
+      navigator.serviceWorker.register('/sw.js');
+    } catch (err) {
+      console.error('Falha ao registrar o Service Worker', err);
+    }
+  });
+}
+// Em desenvolvimento, garantimos que nenhum Service Worker legado continue ativo.
+if (!import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((regs) => regs.forEach((reg) => reg.unregister()))
+    .catch(() => {});
+  if (window.caches?.keys) {
+    window.caches
+      .keys()
+      .then((keys) => Promise.all(keys.map((key) => window.caches.delete(key))))
+      .catch(() => {});
+  }
 }

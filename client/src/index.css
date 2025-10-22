@@ -77,3 +77,13 @@ body.dark .chat-bg {
 
 /* Variante estilo WhatsApp: verde suave + padrão pontilhado */
 /* Modo WhatsApp ativado por atributo no body */
+
+#chat-left-pane,
+#chat-left-pane.hidden,
+#chat-left-pane.md\:hidden,
+#chat-left-pane.translate-x-full,
+#chat-left-pane.-translate-x-full {
+  display: flex !important;
+  transform: none !important;
+  transition: none !important;
+}

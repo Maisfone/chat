@@ -20,6 +20,10 @@ import { ioClient } from "../services/socket.js";
 import { getUser } from "../state/auth.js";
 import { ensurePushSubscription } from "../services/pushClient.js";
 
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 export default function Chat() {
   // Lists and active conversation
   const [groups, setGroups] = useState([]);
@@ -872,10 +876,6 @@ export default function Chat() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState([]); // array of message ids
   const [searchIndex, setSearchIndex] = useState(-1);
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
-  const [mobileSearchShown, setMobileSearchShown] = useState(false);
-  const [desktopSearchShown, setDesktopSearchShown] = useState(false);
   // Right sidebar (profile)
   const [rightOpen, setRightOpen] = useState(false);
   const [rightLoading, setRightLoading] = useState(false);
@@ -905,6 +905,30 @@ export default function Chat() {
   function isFav(msgId) {
     return !!favorites?.[active?.id || ""]?.[msgId];
   }
+  const leftPaneRef = useRef(null);
+  const [groupsCollapsed, setGroupsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("chat_groups_collapsed") === "1";
+    } catch {}
+    return false;
+  });
+  const [peopleCollapsed, setPeopleCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("chat_people_collapsed") === "1";
+    } catch {}
+    return false;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("chat_groups_collapsed", groupsCollapsed ? "1" : "0");
+    } catch {}
+  }, [groupsCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("chat_people_collapsed", peopleCollapsed ? "1" : "0");
+    } catch {}
+  }, [peopleCollapsed]);
   async function toggleFav(m) {
     if (!active?.id || !m?.id) return;
     try {
@@ -945,10 +969,12 @@ export default function Chat() {
     (async () => {
       if (!active?.id) return;
       try {
-        const favs = await api.get(`/messages/favorites?groupId=${active.id}`);
+        const favs = toArray(
+          await api.get(`/messages/favorites?groupId=${active.id}`)
+        );
         const map = {};
         const items = [];
-        for (const f of favs || []) {
+        for (const f of favs) {
           if (f?.message?.id) {
             map[f.message.id] = true;
             items.push(f.message);
@@ -960,11 +986,6 @@ export default function Chat() {
     })();
   }, [active?.id, muted, dmOtherByGroupId]);
   const searchInputRef = useRef(null);
-  const mobileSearchInputRef = useRef(null);
-  const desktopSearchRef = useRef(null);
-  const desktopSearchToggleRef = useRef(null);
-  const mobileSearchBarRef = useRef(null);
-  const mobileSearchToggleRef = useRef(null);
   // Presence map: { [userId]: status }
   const [presence, setPresence] = useState({});
   useEffect(() => {
@@ -1024,52 +1045,15 @@ export default function Chat() {
     return m ? m.author?.id || m.authorId : null;
   }, [dmOtherId, messages, user?.id]);
 
-  function openDesktopSearch() {
-    if (!desktopSearchShown) setDesktopSearchShown(true);
-    setDesktopSearchOpen(true);
-    setTimeout(() => {
-      try {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      } catch {}
-    }, 0);
-  }
-  function closeDesktopSearch() {
-    setDesktopSearchOpen(false);
-    setTimeout(() => setDesktopSearchShown(false), 200);
-  }
-  function toggleDesktopSearch() {
-    if (desktopSearchOpen || desktopSearchShown) closeDesktopSearch();
-    else openDesktopSearch();
-  }
-  function openMobileSearch() {
-    if (!mobileSearchShown) setMobileSearchShown(true);
-    setMobileSearchOpen(true);
-    setTimeout(() => {
-      try {
-        mobileSearchInputRef.current?.focus();
-        mobileSearchInputRef.current?.select();
-      } catch {}
-    }, 0);
-  }
-  function closeMobileSearch() {
-    setMobileSearchOpen(false);
-    setTimeout(() => setMobileSearchShown(false), 200);
-  }
-  function toggleMobileSearch() {
-    if (mobileSearchOpen || mobileSearchShown) closeMobileSearch();
-    else openMobileSearch();
-  }
-
   // Load lists (groups, DMs, people)
   useEffect(() => {
     (async () => {
       try {
-        const g = await api.get("/groups");
+        const g = toArray(await api.get("/groups"));
         setGroups(g);
-        const dmList = await api.get("/dm");
+        const dmList = toArray(await api.get("/dm"));
         setDms(dmList);
-        const ppl = await api.get("/users/all");
+        const ppl = toArray(await api.get("/users/all"));
         setPeople(ppl);
         // restore last active
         const saved = localStorage.getItem("chat_active");
@@ -1094,6 +1078,49 @@ export default function Chat() {
         setErr("Falha ao carregar listas");
       }
     })();
+  }, []);
+
+  // Força a sidebar esquerda a permanecer visível mesmo que scripts externos tentem recolhê-la
+  useEffect(() => {
+    const el = leftPaneRef.current;
+    if (!el) return;
+    const ensureVisible = () => {
+      try {
+        el.style.transform = "translateX(0px)";
+        el.style.transition = "none";
+        el.style.display = "flex";
+        el.classList.remove(
+          "hidden",
+          "translate-x-full",
+          "-translate-x-full",
+          "md:hidden"
+        );
+      } catch {}
+    };
+    ensureVisible();
+    const observer = new MutationObserver(ensureVisible);
+    observer.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+    window.addEventListener("resize", ensureVisible);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", ensureVisible);
+    };
+  }, []);
+
+  // Bloqueia eventos de drawer globais que recolhem a sidebar em telas pequenas
+  useEffect(() => {
+    function stopDrawerEvent(e) {
+      try {
+        e.stopImmediatePropagation?.();
+        e.stopPropagation?.();
+      } catch {}
+    }
+    window.addEventListener("chat:openDrawer", stopDrawerEvent, true);
+    window.addEventListener("chat:closeDrawer", stopDrawerEvent, true);
+    return () => {
+      window.removeEventListener("chat:openDrawer", stopDrawerEvent, true);
+      window.removeEventListener("chat:closeDrawer", stopDrawerEvent, true);
+    };
   }, []);
 
   // Join group rooms (badges realtime)
@@ -1213,8 +1240,10 @@ export default function Chat() {
         const updates = {};
         for (const dm of pending) {
           try {
-            const list = await api.get(`/messages/${dm.groupId}?take=1`);
-            const m = Array.isArray(list) ? list[0] : null;
+            const list = toArray(
+              await api.get(`/messages/${dm.groupId}?take=1`)
+            );
+            const m = list[0] || null;
             const last = m?.createdAt ? new Date(m.createdAt).getTime() : 0;
             const mine = (m?.author?.id || m?.authorId) === user?.id;
             let prev = "";
@@ -1313,8 +1342,8 @@ export default function Chat() {
     if (!active) return;
     let unsub = () => {};
     (async () => {
-      const list = await api.get(`/messages/${active.id}?take=50`);
-      setMessages(list.reverse());
+      const list = toArray(await api.get(`/messages/${active.id}?take=50`));
+      setMessages(list.slice().reverse());
       try {
         await api.post(`/messages/${active.id}/read`, {});
       } catch {}
@@ -1652,69 +1681,6 @@ export default function Chat() {
     setTimeout(() => setHighlightId(null), 1500);
   }
 
-  // Keyboard shortcuts: Ctrl/Cmd+F to focus search, F3/Ctrl+G to navigate
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      const tag =
-        e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
-      const typing =
-        tag === "input" ||
-        tag === "textarea" ||
-        (e.target && e.target.isContentEditable);
-      // Ctrl/Cmd + F => focus search input
-      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
-        e.preventDefault();
-        // Open mobile search bar on small screens
-        if (typeof window !== "undefined" && window.innerWidth < 768) {
-          openMobileSearch();
-        } else {
-          openDesktopSearch();
-        }
-        return;
-      }
-      // F3 or Ctrl/Cmd+G => next/prev match
-      if (
-        !typing &&
-        (e.key === "F3" ||
-          ((e.ctrlKey || e.metaKey) && (e.key === "g" || e.key === "G")))
-      ) {
-        e.preventDefault();
-        jumpToMatch(!e.shiftKey);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [searchMatches, searchIndex]);
-
-  // Close search UIs when clicking outside
-  useEffect(() => {
-    const onDocDown = (e) => {
-      const t = e.target;
-      if (desktopSearchOpen || desktopSearchShown) {
-        const insideDesktop =
-          desktopSearchRef.current && desktopSearchRef.current.contains(t);
-        const onToggle =
-          desktopSearchToggleRef.current &&
-          desktopSearchToggleRef.current.contains(t);
-        if (!insideDesktop && !onToggle) closeDesktopSearch();
-      }
-      if (mobileSearchOpen || mobileSearchShown) {
-        const insideMobile =
-          mobileSearchBarRef.current && mobileSearchBarRef.current.contains(t);
-        const onMobileToggle =
-          mobileSearchToggleRef.current &&
-          mobileSearchToggleRef.current.contains(t);
-        if (!insideMobile && !onMobileToggle) closeMobileSearch();
-      }
-    };
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("touchstart", onDocDown, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("touchstart", onDocDown);
-    };
-  }, [desktopSearchOpen, mobileSearchOpen]);
-
   // Emoji insert helper
   function insertEmoji(emo) {
     const el = inputRef.current;
@@ -2000,6 +1966,14 @@ export default function Chat() {
   // Filtered/sorted lists (WhatsApp-like): last activity desc, unread desc, then name
   const [onlyPinned, setOnlyPinned] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
+  const groupIndexById = useMemo(() => {
+    const idx = {};
+    (groups || []).forEach((g, i) => {
+      if (g?.id) idx[g.id] = i;
+    });
+    return idx;
+  }, [groups]);
+
   const filteredGroups = useMemo(() => {
     const q = convQuery.trim().toLowerCase();
     let list = q
@@ -2017,11 +1991,11 @@ export default function Chat() {
       const ua = a?._unread || 0,
         ub = b?._unread || 0;
       if (ua !== ub) return ub - ua;
-      return (a.name || "").localeCompare(b.name || "", "pt-BR", {
-        sensitivity: "base",
-      });
+      const ia = groupIndexById[a.id] ?? Number.MAX_SAFE_INTEGER;
+      const ib = groupIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
+      return ia - ib;
     });
-  }, [groups, convQuery, pinned, onlyPinned, onlyUnread]);
+  }, [groups, convQuery, pinned, onlyPinned, onlyUnread, groupIndexById]);
 
   // Fast lookup maps for rendering and sorting
   const dmByOtherId = useMemo(() => {
@@ -2040,6 +2014,15 @@ export default function Chat() {
     return idx;
   }, [people]);
 
+  const dmOrderByOtherId = useMemo(() => {
+    const map = {};
+    (dms || []).forEach((d, idx) => {
+      const id = d?.other?.id;
+      if (id) map[id] = idx;
+    });
+    return map;
+  }, [dms]);
+
   // Active conversation pin context
   const activeIsDM = useMemo(() => {
     const gid = active?.id;
@@ -2051,6 +2034,26 @@ export default function Chat() {
     return activeIsDM ? dmOtherId || otherUserId || null : active.id;
   }, [active?.id, activeIsDM, dmOtherId, otherUserId]);
   const activePinned = !!(activePinKey && pinned?.[activePinKey]);
+
+  const activeDisplayName = useMemo(() => {
+    if (!active) return "Selecione um grupo";
+    if (activeIsDM) {
+      const dmInfo = (dms || []).find((d) => d.groupId === active.id);
+      const otherName = dmInfo?.other?.name;
+      if (otherName) return otherName;
+    }
+    return active?.name || "Direto";
+  }, [active, activeIsDM, dms]);
+
+  const activeAvatar = useMemo(() => {
+    if (!active) return undefined;
+    if (active.avatarUrl) return active.avatarUrl;
+    if (activeIsDM) {
+      const dmInfo = (dms || []).find((d) => d.groupId === active.id);
+      if (dmInfo?.other?.avatarUrl) return dmInfo.other.avatarUrl;
+    }
+    return undefined;
+  }, [active, activeIsDM, dms]);
 
   const filteredPeople = useMemo(() => {
     const q = convQuery.trim().toLowerCase();
@@ -2078,9 +2081,11 @@ export default function Chat() {
       const ua = da?._unread || 0,
         ub = db?._unread || 0;
       if (ua !== ub) return ub - ua;
-      // preserve original order as final tie-breaker (no alphabetical)
-      const ia = peopleIndexById[a.id] ?? 0;
-      const ib = peopleIndexById[b.id] ?? 0;
+      const orderA = dmOrderByOtherId[a.id] ?? Number.MAX_SAFE_INTEGER;
+      const orderB = dmOrderByOtherId[b.id] ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      const ia = peopleIndexById[a.id] ?? Number.MAX_SAFE_INTEGER;
+      const ib = peopleIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
       return ia - ib;
     });
   }, [
@@ -2092,6 +2097,7 @@ export default function Chat() {
     pinned,
     dmByOtherId,
     peopleIndexById,
+    dmOrderByOtherId,
   ]);
 
   // Hydrate Groups with last activity/preview on initial load/refresh (similar to DMs)
@@ -2110,8 +2116,10 @@ export default function Chat() {
         const updates = {};
         for (const g of pending) {
           try {
-            const list = await api.get(`/messages/${g.id}?take=1`);
-            const m = Array.isArray(list) ? list[0] : null;
+            const list = toArray(
+              await api.get(`/messages/${g.id}?take=1`)
+            );
+            const m = list[0] || null;
             const last = m?.createdAt ? new Date(m.createdAt).getTime() : 0;
             let prev = "";
             if (m) {
@@ -2143,13 +2151,18 @@ export default function Chat() {
   }, [groups]);
 
   return (
-    <div className="relative flex h-full min-h-full w-full">
+    <div className="relative flex h-full min-h-full w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
       {pushError && (
         <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow">
           {pushError}
         </div>
       )}
-      <aside className="w-72 xl:w-80 flex-shrink-0 flex flex-col border-r border-slate-200/80 bg-white/80 dark:bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
+      <aside
+        id="chat-left-pane"
+        ref={leftPaneRef}
+        className="w-72 xl:w-80 flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto"
+        style={{ transform: "translateX(0px)", display: "flex" }}
+      >
         <div className="px-3 py-2 border-b border-slate-200">
           <input
             value={convQuery}
@@ -2189,10 +2202,25 @@ export default function Chat() {
             </label>
           </div>
         </div>
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200">
-          Grupos
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200 flex items-center justify-between">
+          <span>Grupos</span>
+          <button
+            type="button"
+            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-transform"
+            onClick={() => setGroupsCollapsed((v) => !v)}
+            aria-label={groupsCollapsed ? "Expandir grupos" : "Ocultar grupos"}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              className={`w-4 h-4 transition-transform ${groupsCollapsed ? "-rotate-90" : "rotate-0"}`}
+            >
+              <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
+            </svg>
+          </button>
         </div>
-        {filteredGroups.map((g) => {
+        {!groupsCollapsed && filteredGroups.map((g) => {
           const lastAt = g?._lastAt || 0;
           const lastLabel = lastAt
             ? new Date(lastAt).toLocaleTimeString("pt-BR", {
@@ -2256,11 +2284,27 @@ export default function Chat() {
             </button>
           );
         })}
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800">
-          Pessoas
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800 flex items-center justify-between">
+          <span>Pessoas</span>
+          <button
+            type="button"
+            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-transform"
+            onClick={() => setPeopleCollapsed((v) => !v)}
+            aria-label={peopleCollapsed ? "Expandir pessoas" : "Ocultar pessoas"}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              className={`w-4 h-4 transition-transform ${peopleCollapsed ? "-rotate-90" : "rotate-0"}`}
+            >
+              <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
+            </svg>
+          </button>
         </div>
-        <div id="people-list" className="px-3 py-2 flex flex-col gap-1">
-          {filteredPeople.map((p) => {
+        {!peopleCollapsed && (
+          <div id="people-list" className="px-3 py-2 flex flex-col gap-1">
+            {filteredPeople.map((p) => {
             const dmInfo = dmByOtherId[p.id] || null;
             const unread = dmInfo?._unread || 0;
             const lastAt = dmInfo?._lastAt || 0;
@@ -2346,12 +2390,15 @@ export default function Chat() {
                       {unread}
                     </span>
                   )}
-                  {/* Pin removido para reduzir poluiÃ§Ã£o visual */}
+                  {Boolean(pinned?.[p.id]) && (
+                    <IconStar className="w-4 h-4 text-amber-500" />
+                  )}
                 </span>
               </button>
             );
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </aside>
       {/* Sidebar context menu */}
       {sideMenu?.open && (
@@ -2419,7 +2466,7 @@ export default function Chat() {
         </div>
       )}
       {/* Conversation area */}
-      <div className="relative flex-1 flex min-h-0 flex-col chat-bg">
+      <div className="relative flex-1 flex min-h-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60">
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           <button
             type="button"
@@ -2428,124 +2475,98 @@ export default function Chat() {
             title="Abrir perfil"
           >
             <Avatar
-              url={active?.avatarUrl}
+              url={activeAvatar}
               name={active?.name || "Selecione um grupo"}
               size={36}
             />
-            {/* Nome removido conforme solicitado */}
+            <span className="truncate font-semibold text-slate-700 dark:text-slate-200">
+              {activeDisplayName}
+            </span>
           </button>
-          <div className="ml-auto flex items-center gap-1 relative">
-            {/* Mobile search toggle */}
-            <button
-              ref={mobileSearchToggleRef}
-              type="button"
-              className="md:hidden px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-              title="Buscar"
-              aria-label="Buscar"
-              onClick={toggleMobileSearch}
-            >
-              <IconSearch />
-            </button>
-            {/* Desktop search toggle */}
-            <button
-              ref={desktopSearchToggleRef}
-              type="button"
-              className="hidden md:inline-flex px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-              title="Buscar"
-              aria-label="Buscar"
-              onClick={toggleDesktopSearch}
-            >
-              <IconSearch />
-            </button>
-            {desktopSearchShown && (
-              <div
-                ref={desktopSearchRef}
-                className={`hidden md:flex items-center gap-1 transition-all duration-200 ease-out ${
-                  desktopSearchOpen
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 -translate-y-1 pointer-events-none"
-                }`}
-              >
-                <input
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar mensagens..."
-                  className="border rounded px-2 py-1 text-sm w-56"
-                  aria-label="Buscar mensagens"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      jumpToMatch(!e.shiftKey);
-                    }
-                  }}
-                />
-                {searchQuery && (
-                  <span className="items-center text-[11px] text-slate-500 px-1">
-                    {searchMatches.length
-                      ? `${searchIndex + 1}/${searchMatches.length}`
-                      : "0/0"}
-                  </span>
-                )}
-                <div className="flex items-center">
-                  <button
-                    type="button"
-                    className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-                    title="Anterior"
-                    onClick={() => jumpToMatch(false)}
-                  >
-                    <IconChevronLeft />
-                  </button>
-                  <button
-                    type="button"
-                    className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-                    title="Próximo"
-                    onClick={() => jumpToMatch(true)}
-                  >
-                    <IconChevronRight />
-                  </button>
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-                      title="Limpar"
-                      onClick={() => setSearchQuery("")}
-                    >
-                      <IconX />
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-              title="Mais opções"
-              aria-haspopup="menu"
-              aria-expanded={convMenuOpen}
-              onClick={() => setConvMenuOpen((v) => !v)}
-            >
-              <IconEllipsis />
-            </button>
-            {convMenuOpen && (
-              <div
-                ref={convMenuRef}
-                className="absolute right-0 top-10 z-20 w-48 bg-white border border-slate-200 rounded shadow"
-                role="menu"
-              >
+          <div className="ml-auto flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm">
+              <IconSearch className="h-4 w-4 text-slate-500" />
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar mensagens..."
+                className="w-64 border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
+                aria-label="Buscar mensagens"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    jumpToMatch(!e.shiftKey);
+                  }
+                }}
+              />
+              <span className="text-[11px] text-slate-500">
+                {searchQuery
+                  ? searchMatches.length
+                    ? `${searchIndex + 1}/${searchMatches.length}`
+                    : "0/0"
+                  : "--"}
+              </span>
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-                  onClick={() => {
-                    if (activePinKey) togglePin(activePinKey);
-                    setConvMenuOpen(false);
-                  }}
-                  role="menuitem"
+                  className="px-1.5 py-1 rounded hover:bg-slate-100"
+                  title="Resultado anterior"
+                  onClick={() => jumpToMatch(false)}
                 >
-                  {activePinned ? "Desafixar conversa" : "Fixar conversa"}
+                  <IconChevronLeft />
                 </button>
+                <button
+                  type="button"
+                  className="px-1.5 py-1 rounded hover:bg-slate-100"
+                  title="Próximo resultado"
+                  onClick={() => jumpToMatch(true)}
+                >
+                  <IconChevronRight />
+                </button>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="px-1.5 py-1 rounded hover:bg-slate-100"
+                    title="Limpar busca"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    <IconX />
+                  </button>
+                )}
               </div>
-            )}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                title="Mais opções"
+                aria-haspopup="menu"
+                aria-expanded={convMenuOpen}
+                onClick={() => setConvMenuOpen((v) => !v)}
+              >
+                <IconEllipsis />
+              </button>
+              {convMenuOpen && (
+                <div
+                  ref={convMenuRef}
+                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow"
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      if (activePinKey) togglePin(activePinKey);
+                      setConvMenuOpen(false);
+                    }}
+                    role="menuitem"
+                  >
+                    {activePinned ? "Desafixar conversa" : "Fixar conversa"}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {!active && (
@@ -2570,66 +2591,6 @@ export default function Chat() {
             </div>
           </div>
         )}
-
-        {/* Mobile search bar */}
-        {mobileSearchShown && (
-          <div
-            ref={mobileSearchBarRef}
-            className={`md:hidden px-3 py-2 border-b border-slate-200 bg-white flex items-center gap-2 transition-all duration-200 ease-out ${
-              mobileSearchOpen
-                ? "opacity-100 translate-y-0"
-                : "opacity-0 -translate-y-1 pointer-events-none"
-            }`}
-          >
-            <input
-              ref={mobileSearchInputRef}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar mensagens..."
-              className="flex-1 border rounded px-2 py-1 text-sm"
-              aria-label="Buscar mensagens"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  jumpToMatch(!e.shiftKey);
-                }
-              }}
-            />
-            <span className="text-[11px] text-slate-500 px-1">
-              {searchMatches.length
-                ? `${searchIndex + 1}/${searchMatches.length}`
-                : "0/0"}
-            </span>
-            <button
-              type="button"
-              className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-              title="Anterior"
-              onClick={() => jumpToMatch(false)}
-            >
-              <IconChevronLeft />
-            </button>
-            <button
-              type="button"
-              className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-              title="Próximo"
-              onClick={() => jumpToMatch(true)}
-            >
-              <IconChevronRight />
-            </button>
-            {searchQuery && (
-              <button
-                type="button"
-                className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-                title="Limpar"
-                onClick={() => setSearchQuery("")}
-              >
-                <IconX />
-              </button>
-            )}
-          </div>
-        )}
-
-
         <div
           ref={listRef}
           className={`flex-1 overflow-y-auto overscroll-contain p-4 space-y-3 ${
@@ -3361,7 +3322,7 @@ export default function Chat() {
         </form>
       </div>
       {rightOpen && (
-        <aside className="w-[360px] max-w-sm flex-shrink-0 border-l border-slate-200 bg-white/90 dark:bg-slate-900/40 backdrop-blur-sm flex flex-col">
+        <aside className="w-[360px] max-w-sm flex-shrink-0 border-l border-slate-200 bg-white dark:bg-slate-900/70 flex h-full flex-col">
           <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div className="font-semibold">Detalhes</div>
             <button
