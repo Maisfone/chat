@@ -94,7 +94,19 @@ export default function App() {
   useEffect(() => {
     initSipBackground().catch(()=>{})
   }, [])
-  const logout = () => { clearAuth(); nav('/login') }
+  const logout = useCallback(() => {
+    try {
+      clearAuth()
+    } catch {}
+    setMenuOpen(false)
+    nav('/login', { replace: true })
+    // fallback em caso de navegação bloqueada
+    setTimeout(() => {
+      if (window.location.pathname !== '/login') {
+        window.location.assign('/login')
+      }
+    }, 75)
+  }, [nav])
   const [menuOpen, setMenuOpen] = useState(false)
   const [status, setStatus] = useState(() => localStorage.getItem('chat_status') || 'online')
   const saveStatus = (s) => { setStatus(s); localStorage.setItem('chat_status', s) }
@@ -262,12 +274,12 @@ export default function App() {
       </button>
       <div className="mt-2 border-t border-slate-200 dark:border-slate-700" />
       <div className="flex flex-col gap-1 px-1.5 py-1">
-        <button onClick={()=>{ setMenuOpen(false); nav('/') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Chat</button>
+        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Chat</button>
         {user?.isAdmin && (
-          <button onClick={()=>{ setMenuOpen(false); nav('/admin') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Admin</button>
+          <button type="button" onClick={()=>{ setMenuOpen(false); nav('/admin') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Admin</button>
         )}
-        <button onClick={()=>{ setMenuOpen(false); nav('/profile') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Editar perfil</button>
-        <button onClick={()=>{ setMenuOpen(false); logout() }} className="px-2 py-1.5 text-sm text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/30 text-left">Sair</button>
+        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/profile') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Editar perfil</button>
+        <button type="button" onClick={logout} className="px-2 py-1.5 text-sm text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/30 text-left">Sair</button>
       </div>
     </div>
   )

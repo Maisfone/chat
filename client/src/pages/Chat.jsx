@@ -59,6 +59,58 @@ export default function Chat() {
       return {};
     }
   });
+  const [conversationOrder, setConversationOrder] = useState(() => {
+    try {
+      const raw = localStorage.getItem("chat_conversation_order");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const persistConversationOrder = useCallback((next) => {
+    try {
+      localStorage.setItem("chat_conversation_order", JSON.stringify(next));
+    } catch {}
+  }, []);
+  const bumpConversationOrder = useCallback(
+    (id) => {
+      if (!id) return;
+      setConversationOrder((prev) => {
+        const next = [id, ...prev.filter((x) => x !== id)];
+        persistConversationOrder(next);
+        return next;
+      });
+    },
+    [persistConversationOrder]
+  );
+  const ensureConversationOrder = useCallback(
+    (idsWithTimestamp = []) => {
+      if (!idsWithTimestamp.length) return;
+      setConversationOrder((prev) => {
+        const seen = new Set(prev);
+        const appended = [];
+        idsWithTimestamp
+          .filter((entry) => entry && entry.id)
+          .sort((a, b) => {
+            const ta = coerceTimestamp(a.ts);
+            const tb = coerceTimestamp(b.ts);
+            return tb - ta;
+          })
+          .forEach(({ id }) => {
+            if (!seen.has(id)) {
+              appended.push(id);
+              seen.add(id);
+            }
+          });
+        if (!appended.length) return prev;
+        const next = [...prev, ...appended];
+        persistConversationOrder(next);
+        return next;
+      });
+    },
+    [persistConversationOrder]
+  );
   function togglePin(id) {
     setPinned((prev) => {
       const n = { ...(prev || {}) };
@@ -538,6 +590,159 @@ export default function Chat() {
     if (msg.type === "audio") return "Áudio";
     return "Anexo";
   }
+
+  function coerceTimestamp(value) {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : 0;
+    }
+    if (typeof value === "string" && value) {
+      const ms = Date.parse(value);
+      return Number.isNaN(ms) ? 0 : ms;
+    }
+    return 0;
+  }
+
+  function normalizeConversationMeta(item, fallbackTs) {
+    if (!item) return item;
+    const lastMessage =
+      item.lastMessage ||
+      item.latestMessage ||
+      item.message ||
+      item.lastMessagePreview ||
+      null;
+    const ts =
+      coerceTimestamp(item._lastAt) ||
+      coerceTimestamp(item.lastAt) ||
+      coerceTimestamp(item.lastMessageAt) ||
+      coerceTimestamp(lastMessage?.createdAt) ||
+      coerceTimestamp(lastMessage?.timestamp) ||
+      coerceTimestamp(item.updatedAt) ||
+      coerceTimestamp(item.createdAt) ||
+      fallbackTs ||
+      0;
+    let preview =
+      item._lastPreview !== undefined && item._lastPreview !== null
+        ? item._lastPreview
+        : item.lastPreview !== undefined && item.lastPreview !== null
+        ? item.lastPreview
+        : item.preview !== undefined && item.preview !== null
+        ? item.preview
+        : "";
+    if (!preview && lastMessage) {
+      const type = lastMessage.type || lastMessage.messageType || "text";
+      if (type === "text") preview = lastMessage.content || "";
+      else if (type === "image" || type === "gif") preview = "Imagem";
+      else if (type === "audio") preview = "Áudio";
+      else preview = "Anexo";
+      const authorId =
+        lastMessage.author?.id ||
+        lastMessage.authorId ||
+        lastMessage.userId ||
+        null;
+      if (preview && authorId && authorId === user?.id) {
+        preview = `Você: ${preview}`;
+      }
+    }
+    const existingIncoming =
+      coerceTimestamp(item._lastReceivedAt) ||
+      coerceTimestamp(item.lastIncomingAt) ||
+      coerceTimestamp(item.lastReceivedAt) ||
+      coerceTimestamp(item.lastSeenAt) ||
+      0;
+    const authorId =
+      lastMessage?.author?.id ||
+      lastMessage?.authorId ||
+      lastMessage?.userId ||
+      null;
+    const isIncoming =
+      authorId && user?.id ? authorId !== user.id : Boolean(lastMessage?.from);
+    const incomingTs = isIncoming ? ts : existingIncoming;
+    return {
+      ...item,
+      _lastAt: ts,
+      _lastPreview: preview,
+      _lastReceivedAt: incomingTs,
+    };
+  }
+
+  function normalizeConversationList(list) {
+    const base = Date.now();
+    return (list || [])
+      .map((item, idx) => normalizeConversationMeta(item, base - idx))
+      .sort((a, b) => {
+        const pa = pinned?.[a?.id] ? 1 : 0;
+        const pb = pinned?.[b?.id] ? 1 : 0;
+        if (pa !== pb) return pb - pa;
+        const oa = conversationOrderTs(a);
+        const ob = conversationOrderTs(b);
+        if (oa !== ob) return ob - oa;
+        const la = coerceTimestamp(a?._lastAt);
+        const lb = coerceTimestamp(b?._lastAt);
+        if (la !== lb) return lb - la;
+        return coerceTimestamp(b?.updatedAt) - coerceTimestamp(a?.updatedAt);
+      });
+  }
+
+  const conversationOrderTs = useCallback((item) => {
+    if (!item) return 0;
+    const incoming = coerceTimestamp(item._lastReceivedAt);
+    if (incoming > 0) return incoming;
+    return coerceTimestamp(item._lastAt);
+  }, []);
+
+  const getOrderRank = useCallback(
+    (id) => {
+      if (!id) return Number.MAX_SAFE_INTEGER;
+      const index = conversationOrder.indexOf(id);
+      return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+    },
+    [conversationOrder]
+  );
+
+  function updateConversationActivity(msg, { mine = false } = {}) {
+    if (!msg || !msg.groupId) return;
+    const ts = (() => {
+      try {
+        return new Date(msg.createdAt || Date.now()).getTime();
+      } catch {
+        return Date.now();
+      }
+    })();
+    let preview = previewFromMessage(msg);
+    if (mine && preview) preview = `Você: ${preview}`;
+    const isActive = active?.id === msg.groupId;
+    bumpConversationOrder(msg.groupId);
+    setGroups((prev) =>
+      (prev || []).map((g) => {
+        if (!g || g.id !== msg.groupId) return g;
+        const prevReceived = coerceTimestamp(g._lastReceivedAt);
+        const next = {
+          ...g,
+          _lastAt: ts,
+          _lastPreview: preview,
+          _lastReceivedAt: !mine ? ts : prevReceived,
+        };
+        if (isActive) next._unread = 0;
+        else if (!mine) next._unread = (g._unread || 0) + 1;
+        return next;
+      })
+    );
+    setDms((prev) =>
+      (prev || []).map((d) => {
+        if (!d || d.groupId !== msg.groupId) return d;
+        const prevReceived = coerceTimestamp(d._lastReceivedAt);
+        const next = {
+          ...d,
+          _lastAt: ts,
+          _lastPreview: preview,
+          _lastReceivedAt: !mine ? ts : prevReceived,
+        };
+        if (isActive) next._unread = 0;
+        else if (!mine) next._unread = (d._unread || 0) + 1;
+        return next;
+      })
+    );
+  }
   function fileNameFromUrl(u) {
     try {
       if (!u) return "";
@@ -888,22 +1093,34 @@ export default function Chat() {
   useEffect(() => {
     (async () => {
       try {
-        const g = toArray(await api.get("/groups"));
-        setGroups(g);
-        const dmList = toArray(await api.get("/dm"));
-        setDms(dmList);
+        const rawGroups = toArray(await api.get("/groups"));
+        const normalizedGroups = normalizeConversationList(rawGroups);
+        setGroups(normalizedGroups);
+        const dmListRaw = toArray(await api.get("/dm"));
+        const normalizedDms = normalizeConversationList(dmListRaw);
+        setDms(normalizedDms);
+        ensureConversationOrder([
+          ...normalizedGroups.map((g) => ({
+            id: g.id,
+            ts: conversationOrderTs(g),
+          })),
+          ...normalizedDms.map((d) => ({
+            id: d.groupId,
+            ts: conversationOrderTs(d),
+          })),
+        ]);
         const ppl = toArray(await api.get("/users/all"));
         setPeople(ppl);
         // restore last active
         const saved = localStorage.getItem("chat_active");
         if (saved) {
-          const foundG = g.find((x) => x.id === saved);
+          const foundG = normalizedGroups.find((x) => x.id === saved);
           if (foundG) {
             setActive(foundG);
             hideLeftIfMobile();
             return;
           }
-          const foundDM = dmList.find((x) => x.groupId === saved);
+          const foundDM = normalizedDms.find((x) => x.groupId === saved);
           if (foundDM) {
             setActive({
               id: foundDM.groupId,
@@ -914,15 +1131,22 @@ export default function Chat() {
             return;
           }
         }
-        if (g[0]) {
-          setActive(g[0]);
+        if (normalizedGroups[0]) {
+          setActive(normalizedGroups[0]);
+          hideLeftIfMobile();
+        } else if (normalizedDms[0]) {
+          setActive({
+            id: normalizedDms[0].groupId,
+            name: normalizedDms[0].other?.name || "Direto",
+            avatarUrl: normalizedDms[0].other?.avatarUrl || undefined,
+          });
           hideLeftIfMobile();
         }
       } catch (e) {
         setErr("Falha ao carregar listas");
       }
     })();
-  }, [hideLeftIfMobile]);
+  }, [hideLeftIfMobile, ensureConversationOrder, conversationOrderTs]);
 
   // Força a sidebar esquerda a permanecer visível em telas largas caso algum script externo altere o estilo
   useEffect(() => {
@@ -1005,20 +1229,22 @@ export default function Chat() {
         if (userA.id !== meId && userB.id !== meId) return; // nÃ£o envolve este usuÃ¡rio
         const other = userA.id === meId ? userB : userA;
         // adiciona DM se ainda nÃ£o existir
+        const nowTs = Date.now();
         setDms((prev) => {
           if ((prev || []).some((d) => d.groupId === groupId)) return prev;
           return [
-            { id: groupId, groupId, other, _unread: 0, _lastAt: Date.now() },
             ...(prev || []),
+            { id: groupId, groupId, other, _unread: 0, _lastAt: nowTs },
           ];
         });
+        ensureConversationOrder([{ id: groupId, ts: nowTs }]);
         // entra na sala para receber mensagens em tempo real
         s.emit("group:join", groupId);
       } catch {}
     };
     s.on("dm:created", onDmCreated);
     return () => s.off("dm:created", onDmCreated);
-  }, [user?.id]);
+  }, [user?.id, ensureConversationOrder]);
 
   // Realtime: atualizar lista de pessoas quando usuÃ¡rios forem criados/atualizados/excluÃ­dos
   useEffect(() => {
@@ -1108,7 +1334,11 @@ export default function Chat() {
               else prev = "Anexo";
               if (mine) prev = `Você: ${prev}`;
             }
-            updates[dm.groupId] = { last, prev };
+            updates[dm.groupId] = {
+              last,
+              prev,
+              received: !mine ? last : coerceTimestamp(dm._lastReceivedAt),
+            };
           } catch {}
         }
         if (Object.keys(updates).length) {
@@ -1119,14 +1349,21 @@ export default function Chat() {
                     ...x,
                     _lastAt: updates[x.groupId].last,
                     _lastPreview: updates[x.groupId].prev,
+                    _lastReceivedAt: updates[x.groupId].received,
                   }
                 : x
             )
           );
+          ensureConversationOrder(
+            Object.entries(updates).map(([groupId, meta]) => ({
+              id: groupId,
+              ts: meta.last,
+            }))
+          );
         }
       } catch {}
     })();
-  }, [dms]);
+  }, [dms, ensureConversationOrder]);
 
   // Open DM with a person, creating if needed
   async function startConversation(otherId) {
@@ -1135,20 +1372,14 @@ export default function Chat() {
       const dm = await api.get(`/dm/with/${otherId}`);
       if (dm?.groupId) {
         setDms((prev) => {
-          const existing = prev.find((x) => x.groupId === dm.groupId);
-          const preservedLast = existing?._lastAt;
-          const preservedUnread = existing?._unread || 0;
-          const rest = prev.filter((x) => x.groupId !== dm.groupId);
-          return [
-            {
-              id: dm.groupId,
-              groupId: dm.groupId,
-              other: dm.other,
-              _unread: preservedUnread,
-              _lastAt: preservedLast,
-            },
-            ...rest,
-          ];
+          return (prev || []).map((item) =>
+            item.groupId === dm.groupId
+              ? {
+                  ...item,
+                  other: dm.other || item.other,
+                }
+              : item
+          );
         });
         setActive({
           id: dm.groupId,
@@ -1162,12 +1393,25 @@ export default function Chat() {
     try {
       const dm = await api.post(`/dm/${otherId}`);
       if (dm?.groupId) {
+        const alreadyHad = (dms || []).some((x) => x.groupId === dm.groupId);
         setDms((prev) => {
           const existing = prev.find((x) => x.groupId === dm.groupId);
           const preservedLast = existing?._lastAt;
           const preservedUnread = existing?._unread || 0;
-          const rest = prev.filter((x) => x.groupId !== dm.groupId);
+          if (existing) {
+            return prev.map((item) =>
+              item.groupId === dm.groupId
+                ? {
+                    ...item,
+                    other: dm.other,
+                    _unread: preservedUnread,
+                    _lastAt: preservedLast,
+                  }
+                : item
+            );
+          }
           return [
+            ...(prev || []),
             {
               id: dm.groupId,
               groupId: dm.groupId,
@@ -1175,9 +1419,13 @@ export default function Chat() {
               _unread: preservedUnread,
               _lastAt: preservedLast,
             },
-            ...rest,
           ];
         });
+        if (!alreadyHad) {
+          ensureConversationOrder([
+            { id: dm.groupId, ts: coerceTimestamp(dm.lastMessageAt) || Date.now() },
+          ]);
+        }
         setActive({
           id: dm.groupId,
           name: dm.other?.name || "Direto",
@@ -1220,7 +1468,6 @@ export default function Chat() {
       s.emit("group:join", active.id);
 
       const onNew = (msg) => {
-        const ts = new Date(msg?.createdAt || Date.now()).getTime();
         const mine = (msg.author?.id || msg.authorId) === user?.id;
         const isActive = msg.groupId === active.id;
         const isMuted =
@@ -1247,6 +1494,7 @@ export default function Chat() {
             showNotificationFor(msg);
           } catch {}
         }
+        updateConversationActivity(msg, { mine });
         if (isActive) {
           setMessages((prev) => {
             if ((prev || []).some((m) => m.id === msg.id)) return prev;
@@ -1264,63 +1512,10 @@ export default function Chat() {
             }
             return [...prev, msg];
           });
-          // bump activity on active convo
-          setGroups((prev) =>
-            prev.map((g) => (g.id === active.id ? { ...g, _lastAt: ts } : g))
-          );
-          setDms((prev) =>
-            prev.map((d) =>
-              d.groupId === active.id
-                ? {
-                    ...d,
-                    _lastAt: ts,
-                    _lastPreview:
-                      msg.type === "text"
-                        ? msg.content
-                        : msg.type === "image" || msg.type === "gif"
-                        ? "Imagem"
-                        : msg.type === "audio"
-                        ? "Áudio"
-                        : "Anexo",
-                  }
-                : d
-            )
-          );
-          try {
-            if (!mine && !isMuted) playPing();
-          } catch {}
-        } else {
-          // unread + activity on other convos
-          setGroups((prev) =>
-            prev.map((g) =>
-              g.id === msg.groupId
-                ? { ...g, _unread: (g._unread || 0) + 1, _lastAt: ts }
-                : g
-            )
-          );
-          setDms((prev) =>
-            prev.map((d) =>
-              d.groupId === msg.groupId
-                ? {
-                    ...d,
-                    _unread: (d._unread || 0) + 1,
-                    _lastAt: ts,
-                    _lastPreview:
-                      msg.type === "text"
-                        ? msg.content
-                        : msg.type === "image" || msg.type === "gif"
-                        ? "Imagem"
-                        : msg.type === "audio"
-                        ? "Áudio"
-                        : "Anexo",
-                  }
-                : d
-            )
-          );
-          try {
-            if (!mine && !isMuted) playPing();
-          } catch {}
         }
+        try {
+          if (!mine && !isMuted) playPing();
+        } catch {}
       };
       const onUpdated = (msg) => {
         if (msg?.groupId === active.id) {
@@ -1422,6 +1617,7 @@ export default function Chat() {
           if ((prev || []).some((m) => m.id === created.id)) return prev;
           return [...prev, created];
         });
+        updateConversationActivity(created, { mine: true });
         setText("");
       }
       if (hasFiles) {
@@ -1443,6 +1639,7 @@ export default function Chat() {
               return prev;
             return [...prev, createdUpload];
           });
+          updateConversationActivity(createdUpload, { mine: true });
         }
         clearAttachments();
       }
@@ -1671,6 +1868,7 @@ export default function Chat() {
       setMessages((prev) =>
         prev.some((m) => m.id === created.id) ? prev : [...prev, created]
       );
+      updateConversationActivity(created, { mine: true });
       setRecPendingFile(null);
       try {
         if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
@@ -1841,9 +2039,15 @@ export default function Chat() {
       const pa = pinned?.[a.id] ? 1 : 0;
       const pb = pinned?.[b.id] ? 1 : 0;
       if (pa !== pb) return pb - pa; // pinned first
-      const la = a?._lastAt || 0,
-        lb = b?._lastAt || 0;
+      const ra = getOrderRank(a.id);
+      const rb = getOrderRank(b.id);
+      if (ra !== rb) return ra - rb;
+      const la = conversationOrderTs(a);
+      const lb = conversationOrderTs(b);
       if (la !== lb) return lb - la;
+      const altA = coerceTimestamp(a?._lastAt);
+      const altB = coerceTimestamp(b?._lastAt);
+      if (altA !== altB) return altB - altA;
       const ua = a?._unread || 0,
         ub = b?._unread || 0;
       if (ua !== ub) return ub - ua;
@@ -1851,7 +2055,16 @@ export default function Chat() {
       const ib = groupIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
       return ia - ib;
     });
-  }, [groups, convQuery, pinned, onlyPinned, onlyUnread, groupIndexById]);
+  }, [
+    groups,
+    convQuery,
+    pinned,
+    onlyPinned,
+    onlyUnread,
+    groupIndexById,
+    getOrderRank,
+    conversationOrderTs,
+  ]);
 
   // Fast lookup maps for rendering and sorting
   const dmByOtherId = useMemo(() => {
@@ -1931,9 +2144,15 @@ export default function Chat() {
       if (pa !== pb) return pb - pa; // pinned first
       const da = dmByOtherId[a.id];
       const db = dmByOtherId[b.id];
-      const la = da?._lastAt || 0,
-        lb = db?._lastAt || 0;
+      const ra = getOrderRank(da?.groupId);
+      const rb = getOrderRank(db?.groupId);
+      if (ra !== rb) return ra - rb;
+      const la = conversationOrderTs(da);
+      const lb = conversationOrderTs(db);
       if (la !== lb) return lb - la;
+      const altA = coerceTimestamp(da?._lastAt);
+      const altB = coerceTimestamp(db?._lastAt);
+      if (altA !== altB) return altB - altA;
       const ua = da?._unread || 0,
         ub = db?._unread || 0;
       if (ua !== ub) return ub - ua;
@@ -1954,6 +2173,8 @@ export default function Chat() {
     dmByOtherId,
     peopleIndexById,
     dmOrderByOtherId,
+    getOrderRank,
+    conversationOrderTs,
   ]);
 
   // Hydrate Groups with last activity/preview on initial load/refresh (similar to DMs)
@@ -1977,16 +2198,20 @@ export default function Chat() {
             );
             const m = list[0] || null;
             const last = m?.createdAt ? new Date(m.createdAt).getTime() : 0;
+            const mine = (m?.author?.id || m?.authorId) === user?.id;
             let prev = "";
             if (m) {
               if (m.type === "text") prev = m.content || "";
               else if (m.type === "image" || m.type === "gif") prev = "Imagem";
               else if (m.type === "audio") prev = "Áudio";
               else prev = "Anexo";
-              const mine = (m?.author?.id || m?.authorId) === user?.id;
               if (mine) prev = `Você: ${prev}`;
             }
-            updates[g.id] = { last, prev };
+            updates[g.id] = {
+              last,
+              prev,
+              received: !mine ? last : coerceTimestamp(g._lastReceivedAt),
+            };
           } catch {}
         }
         if (Object.keys(updates).length) {
@@ -1997,14 +2222,21 @@ export default function Chat() {
                     ...x,
                     _lastAt: updates[x.id].last,
                     _lastPreview: updates[x.id].prev,
+                    _lastReceivedAt: updates[x.id].received,
                   }
                 : x
             )
           );
+          ensureConversationOrder(
+            Object.entries(updates).map(([id, meta]) => ({
+              id,
+              ts: meta.last,
+            }))
+          );
         }
       } catch {}
     })();
-  }, [groups]);
+  }, [groups, ensureConversationOrder]);
 
   return (
     <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
