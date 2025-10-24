@@ -36,3 +36,9 @@ Reuniões (vídeo)
 Observações
 - Uploads são servidos via `/uploads/...` do backend.
 - UI inicial é simples; podemos evoluir com gravação de áudio no browser, busca, presença online e notificações.
+
+Backup e restauração
+- Pré-requisito: instalar utilitários do PostgreSQL (`pg_dump` e `psql`) e garantir que `DATABASE_URL` e (opcionalmente) `UPLOAD_DIR` estejam configurados.
+- Caso as ferramentas não estejam no PATH, defina `PG_DUMP_PATH` e `PSQL_PATH` (ex.: `C:\Program Files\PostgreSQL\15\bin\pg_dump.exe`).
+- Criar backup (gera pasta em `./backups` com `db.sql` + uploads): `node scripts/chat-backup.js`
+- Restaurar backup (substitui banco e uploads atuais; exige confirmação `RESTAURAR` ou `--force`): `node scripts/chat-restore.js ./backups/chat-backup-AAAA-MM-DDTHH-mm-ss`

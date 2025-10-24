@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react' 
-import { getUser } from '../state/auth.js'
-import { api } from '../services/api.js'
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react' 
+import { getUser, getToken } from '../state/auth.js'
+import { api, API_BASE } from '../services/api.js'
 
 export default function Admin() { 
   const me = getUser()
@@ -53,6 +53,24 @@ export default function Admin() {
     setToast({ message, type })
     try { if (ms) setTimeout(() => setToast(null), ms) } catch {}
   }
+  const formatDateTime = useCallback((value) => {
+    if (!value) return '—'
+    try {
+      return new Date(value).toLocaleString('pt-BR')
+    } catch {
+      return value
+    }
+  }, [])
+  const formatBytes = useCallback((value) => {
+    const bytes = Number(value)
+    if (!Number.isFinite(bytes) || bytes < 0) return '—'
+    if (bytes === 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+    const num = bytes / Math.pow(1024, exponent)
+    const formatted = num >= 10 ? num.toFixed(0) : num.toFixed(1)
+    return `${formatted} ${units[exponent]}`
+  }, [])
 
   // Admin > Configurações (ícone do chat)
   const [cfgIcon, setCfgIcon] = useState('')
@@ -66,6 +84,26 @@ export default function Admin() {
   const [soundDeletingId, setSoundDeletingId] = useState('')
   const soundInputRef = useRef(null)
   const previewAudioRef = useRef(null)
+  const defaultBackupSettings = useMemo(() => ({
+    autoEnabled: false,
+    time: '02:00',
+    retentionDays: 7,
+    lastAutoRunAt: null,
+    lastManualRunAt: null,
+    lastManualResult: null,
+    lastAutoResult: null,
+    lastRestoreAt: null,
+    lastRestoreName: null,
+    lastRestoreActor: null,
+  }), [])
+  const [backups, setBackups] = useState([])
+  const [backupSettings, setBackupSettings] = useState(defaultBackupSettings)
+  const [backupLoading, setBackupLoading] = useState(false)
+  const [backupRunning, setBackupRunning] = useState(false)
+  const [backupRestoring, setBackupRestoring] = useState('')
+  const [backupDeleting, setBackupDeleting] = useState('')
+  const [backupDownloading, setBackupDownloading] = useState('')
+  const [backupSavingSettings, setBackupSavingSettings] = useState(false)
   // Admin > Configurações (papel de parede das Conversas)
   const [cfgBg, setCfgBg] = useState(() => {
     try { return localStorage.getItem('chat_bg') || 'default' } catch { return 'default' }
@@ -187,6 +225,124 @@ export default function Admin() {
       showToast('Papel de parede global excluído', 'success')
     } catch(e){ showToast(e.message||'Falha ao excluir papel de parede', 'error') }
   }
+
+  const loadBackups = useCallback(async () => {
+    setBackupLoading(true)
+    try {
+      const data = await api.get('/admin/backup')
+      setBackups(Array.isArray(data?.backups) ? data.backups : [])
+      const nextSettings = { ...defaultBackupSettings, ...(data?.settings || {}) }
+      setBackupSettings(nextSettings)
+    } catch (e) {
+      showToast(e.message || 'Falha ao carregar backups', 'error')
+    } finally {
+      setBackupLoading(false)
+    }
+  }, [defaultBackupSettings])
+
+  async function runBackupNow() {
+    setBackupRunning(true)
+    try {
+      await api.post('/admin/backup/run', {})
+      showToast('Backup criado com sucesso', 'success')
+      await loadBackups()
+    } catch (e) {
+      showToast(e.message || 'Falha ao executar backup', 'error')
+    } finally {
+      setBackupRunning(false)
+    }
+  }
+
+  async function restoreBackupName(name) {
+    if (!name) return
+    let ok = true
+    if (typeof window !== 'undefined') {
+      ok = window.confirm(`Restaurar o backup "${name}"? Esta ação substituirá mensagens e arquivos atuais.`)
+    }
+    if (!ok) return
+    setBackupRestoring(name)
+    try {
+      await api.post('/admin/backup/restore', { name, confirm: true })
+      showToast('Backup restaurado com sucesso', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao restaurar backup', 'error')
+    } finally {
+      setBackupRestoring('')
+      await loadBackups()
+    }
+  }
+
+  async function deleteBackupName(name) {
+    if (!name) return
+    let ok = true
+    if (typeof window !== 'undefined') {
+      ok = window.confirm(`Excluir backup "${name}"?`)
+    }
+    if (!ok) return
+    setBackupDeleting(name)
+    try {
+      await api.delete(`/admin/backup/${encodeURIComponent(name)}`)
+      showToast('Backup excluído', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao excluir backup', 'error')
+    } finally {
+      setBackupDeleting('')
+      await loadBackups()
+    }
+  }
+
+  async function downloadBackup(name) {
+    if (!name) return
+    setBackupDownloading(name)
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/download/${encodeURIComponent(name)}`, {
+        headers: { Authorization: `Bearer ${getToken() || ''}` },
+      })
+      if (!res.ok) {
+        const txt = await res.text()
+        throw new Error(txt || 'Falha ao preparar download')
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${name}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      showToast(e.message || 'Falha ao baixar backup', 'error')
+    } finally {
+      setBackupDownloading('')
+    }
+  }
+
+  async function saveBackupSchedule(e) {
+    e?.preventDefault?.()
+    setBackupSavingSettings(true)
+    try {
+      const payload = {
+        autoEnabled: backupSettings.autoEnabled,
+        time: backupSettings.time,
+        retentionDays: backupSettings.retentionDays,
+      }
+      const data = await api.post('/admin/backup/settings', payload)
+      const nextSettings = { ...defaultBackupSettings, ...(data?.settings || payload) }
+      setBackupSettings(nextSettings)
+      showToast('Configurações de backup salvas', 'success')
+    } catch (err) {
+      showToast(err.message || 'Falha ao salvar configurações de backup', 'error')
+    } finally {
+      setBackupSavingSettings(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'configuracoes') {
+      loadBackups()
+    }
+  }, [tab, loadBackups])
 
 
   function triggerSoundUpload() {
@@ -771,6 +927,145 @@ export default function Admin() {
 
       {tab==='configuracoes' && (
         <section className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+          <div className="bg-white p-4 rounded border border-slate-200 lg:col-span-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">Backups do chat</h3>
+                <p className="text-sm text-slate-500">Gera cópias do banco de dados e da pasta de uploads. Restaurar um backup substitui dados atuais.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                  onClick={runBackupNow}
+                  disabled={backupRunning}
+                >
+                  {backupRunning ? 'Executando...' : 'Executar backup agora'}
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border hover:bg-slate-50 disabled:opacity-60"
+                  onClick={loadBackups}
+                  disabled={backupLoading}
+                >
+                  {backupLoading ? 'Atualizando...' : 'Atualizar lista'}
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={saveBackupSchedule} className="mt-4 space-y-3">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!backupSettings.autoEnabled}
+                  onChange={e=>setBackupSettings(prev=>({ ...prev, autoEnabled: e.target.checked }))}
+                />
+                Ativar backup automático diário
+              </label>
+              <div className="grid md:grid-cols-3 gap-3 md:items-end">
+                <div>
+                  <label className="text-xs text-slate-500 uppercase tracking-wide">Horário</label>
+                  <input
+                    type="time"
+                    className="mt-1 border rounded px-3 py-2 w-full"
+                    value={backupSettings.time || '02:00'}
+                    onChange={e=>setBackupSettings(prev=>({ ...prev, time: e.target.value }))}
+                    disabled={!backupSettings.autoEnabled}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 uppercase tracking-wide">Retenção (dias)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="365"
+                    className="mt-1 border rounded px-3 py-2 w-full"
+                    value={backupSettings.retentionDays ?? 7}
+                    onChange={e=>setBackupSettings(prev=>({ ...prev, retentionDays: Math.max(0, Number(e.target.value)) }))}
+                    disabled={!backupSettings.autoEnabled}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-60"
+                    disabled={backupSavingSettings}
+                  >
+                    {backupSavingSettings ? 'Salvando...' : 'Salvar agendamento'}
+                  </button>
+                </div>
+              </div>
+              <div className="text-xs text-slate-500 space-y-1">
+                <div>Último backup manual: {formatDateTime(backupSettings.lastManualRunAt)} {backupSettings.lastManualResult?.ok === false ? `(erro: ${backupSettings.lastManualResult?.error || 'desconhecido'})` : ''}</div>
+                <div>Último backup automático: {formatDateTime(backupSettings.lastAutoRunAt)} {backupSettings.lastAutoResult?.ok === false ? `(erro: ${backupSettings.lastAutoResult?.error || 'desconhecido'})` : ''}</div>
+                <div>Última restauração: {formatDateTime(backupSettings.lastRestoreAt)} {backupSettings.lastRestoreName ? `(${backupSettings.lastRestoreName})` : ''}</div>
+              </div>
+            </form>
+
+            <div className="mt-4">
+              <h4 className="font-medium">Backups disponíveis</h4>
+              {backupLoading ? (
+                <div className="mt-2 text-sm text-slate-500">Carregando backups...</div>
+              ) : backups.length ? (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="min-w-full text-sm border border-slate-200 rounded">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Nome</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Criado em</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Tamanho</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Origem</th>
+                        <th className="px-3 py-2 text-right font-medium text-slate-600">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {backups.map((item) => (
+                        <tr key={item.name} className="border-t border-slate-200">
+                          <td className="px-3 py-2 font-mono text-xs md:text-sm">{item.name}</td>
+                          <td className="px-3 py-2">{formatDateTime(item.createdAt)}</td>
+                          <td className="px-3 py-2">{formatBytes(item.size)}</td>
+                          <td className="px-3 py-2">
+                            {item?.meta?.reason === 'auto' ? 'Automático' : 'Manual'}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                className="px-2 py-1 text-xs rounded border hover:bg-slate-50 disabled:opacity-60"
+                                onClick={()=>downloadBackup(item.name)}
+                                disabled={backupDownloading === item.name}
+                              >
+                                {backupDownloading === item.name ? 'Baixando...' : 'Download'}
+                              </button>
+                              <button
+                                type="button"
+                                className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+                                onClick={()=>restoreBackupName(item.name)}
+                                disabled={backupRestoring === item.name}
+                              >
+                                {backupRestoring === item.name ? 'Restaurando...' : 'Restaurar'}
+                              </button>
+                              <button
+                                type="button"
+                                className="px-2 py-1 text-xs rounded border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-60"
+                                onClick={()=>deleteBackupName(item.name)}
+                                disabled={backupDeleting === item.name}
+                              >
+                                {backupDeleting === item.name ? 'Excluindo...' : 'Excluir'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="mt-2 text-sm text-slate-500">Nenhum backup encontrado ainda.</div>
+              )}
+            </div>
+          </div>
+
           {/* Global (para todos) */}
           <div className="bg-white p-4 rounded border border-slate-200 lg:col-span-2">
             <h3 className="text-lg font-semibold">Chat da organização (Global)</h3>

@@ -13,8 +13,10 @@ import dmRoutes from "./routes/dm.js";
 import phoneRoutes from "./routes/phone.js";
 import meetingRoutes from "./routes/meetings.js";
 import configRoutes from "./routes/config.js";
+import backupRoutes from "./routes/backup.js";
 import pushRoutes from "./routes/push.js";
 import { setVapidFromEnv } from "./lib/push.js";
+import { initBackupScheduler } from "./lib/backupScheduler.js";
 
 dotenv.config();
 setVapidFromEnv();
@@ -91,7 +93,10 @@ app.use("/api/dm", dmRoutes);
 app.use("/api/phone", phoneRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/admin/config", configRoutes);
+app.use("/api/admin/backup", backupRoutes);
 app.use("/api/push", pushRoutes);
+
+initBackupScheduler();
 
 // Socket rooms
 io.on("connection", (socket) => {

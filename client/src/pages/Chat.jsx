@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -17,8 +17,9 @@ import {
   IconStar,
 } from "../components/Icon.jsx";
 import { ioClient } from "../services/socket.js";
-import { getUser } from "../state/auth.js";
+import { getUser, getToken } from "../state/auth.js";
 import { ensurePushSubscription } from "../services/pushClient.js";
+import { EMOJI_CATS, EMOJI_TABS } from "../constants/emojiData.js";
 
 function toArray(value) {
   return Array.isArray(value) ? value : [];
@@ -131,218 +132,6 @@ export default function Chat() {
   });
   const sideMenuRef = useRef(null);
   // Emoji list (clean, UTF-8 safe)
-  const EMOJI_CATS = {
-    recent: [],
-    caras: [
-      "\uD83D\uDE00",
-      "\uD83D\uDE01",
-      "\uD83D\uDE02",
-      "\uD83E\uDD23",
-      "\uD83D\uDE0A",
-      "\uD83D\uDE42",
-      "\uD83D\uDE09",
-      "\uD83D\uDE05",
-      "\uD83D\uDE06",
-      "\uD83E\uDD79",
-      "\uD83D\uDE0D",
-      "\uD83D\uDE18",
-      "\uD83D\uDE1C",
-      "\uD83E\uDD2A",
-      "\uD83E\uDD14",
-      "\uD83D\uDE44",
-      "\uD83D\uDE0F",
-      "\uD83D\uDE0E",
-      "\uD83D\uDE22",
-      "\uD83D\uDE2D",
-      "\uD83D\uDE21",
-      "\uD83D\uDE31",
-      "\uD83E\uDD73",
-      "\uD83D\uDE2C",
-    ],
-    gestos: [
-      "\uD83D\uDC4D",
-      "\uD83D\uDC4E",
-      "\uD83D\uDC4F",
-      "\uD83D\uDE4C",
-      "\uD83D\uDE4F",
-      "\uD83E\uDD1D",
-      "\uD83E\uDD1E",
-      "\u270C\uFE0F",
-      "\uD83D\uDC4C",
-      "\uD83E\uDEF6",
-      "\uD83E\uDD0C",
-      "\uD83D\uDC4A",
-      "\u270A",
-      "\uD83E\uDD1F",
-      "\uD83E\uDD18",
-      "\uD83D\uDCAA",
-    ],
-    amor: [
-      "\u2764\uFE0F",
-      "\uD83E\uDDE1",
-      "\uD83D\uDC9B",
-      "\uD83D\uDC9A",
-      "\uD83D\uDC99",
-      "\uD83D\uDC9C",
-      "\uD83E\uDD0D",
-      "\uD83E\uDD0E",
-      "\uD83D\uDDA4",
-      "\uD83D\uDC98",
-      "\uD83D\uDC96",
-      "\uD83D\uDC97",
-      "\uD83D\uDC93",
-      "\uD83D\uDC9E",
-      "\uD83D\uDC94",
-      "\uD83C\uDF89",
-      "\u2728",
-      "\u2B50",
-      "\uD83C\uDF1F",
-      "\uD83D\uDD25",
-      "\u26A1",
-      "\uD83D\uDCAF",
-      "\u2705",
-      "\u274C",
-      "\u2757",
-      "\u2753",
-      "\u26A0\uFE0F",
-      "\uD83D\uDD14",
-      "\uD83D\uDD15",
-    ],
-    animais: [
-      "\uD83D\uDC36",
-      "\uD83D\uDC31",
-      "\uD83D\uDC2D",
-      "\uD83D\uDC39",
-      "\uD83D\uDC30",
-      "\uD83E\uDD8A",
-      "\uD83D\uDC3B",
-      "\uD83D\uDC3C",
-      "\uD83D\uDC28",
-      "\uD83D\uDC2F",
-      "\uD83E\uDD81",
-      "\uD83D\uDC2E",
-      "\uD83D\uDC37",
-      "\uD83D\uDC35",
-      "\uD83E\uDD84",
-      "\uD83D\uDC14",
-    ],
-    comida: [
-      "\uD83C\uDF4E",
-      "\uD83C\uDF4A",
-      "\uD83C\uDF4B",
-      "\uD83C\uDF4C",
-      "\uD83C\uDF49",
-      "\uD83C\uDF47",
-      "\uD83C\uDF53",
-      "\uD83C\uDF52",
-      "\uD83C\uDF4D",
-      "\uD83E\uDD6D",
-      "\uD83E\uDD5D",
-      "\uD83C\uDF51",
-      "\uD83C\uDF55",
-      "\uD83C\uDF54",
-      "\uD83C\uDF5F",
-      "\uD83C\uDF2D",
-      "\uD83C\uDF63",
-      "\uD83C\uDF5C",
-      "\uD83C\uDF5D",
-      "\uD83C\uDF70",
-      "\uD83C\uDF69",
-      "\uD83C\uDF6A",
-      "\uD83C\uDF6B",
-      "\uD83C\uDF7F",
-      "\uD83C\uDF7B",
-      "\u2615",
-      "\uD83E\uDDC3",
-    ],
-    objetos: [
-      "\uD83D\uDCF1",
-      "\uD83D\uDCBB",
-      "\uD83D\uDDA5\uFE0F",
-      "\u2328\uFE0F",
-      "\uD83D\uDDB1\uFE0F",
-      "\uD83D\uDD8A\uFE0F",
-      "\uD83D\uDCDD",
-      "\uD83D\uDCCE",
-      "\uD83D\uDCCC",
-      "\uD83D\uDCF7",
-      "\uD83C\uDFA7",
-      "\uD83C\uDFA4",
-      "\uD83C\uDFAC",
-      "\u23F0",
-      "\uD83D\uDD52",
-    ],
-    transportes: [
-      "\uD83D\uDE97",
-      "\uD83D\uDE8C",
-      "\uD83D\uDE95",
-      "\uD83D\uDE99",
-      "\uD83D\uDE91",
-      "\uD83D\uDE92",
-      "\u2708\uFE0F",
-      "\uD83D\uDE80",
-      "\uD83D\uDEB2",
-      "\uD83D\uDE86",
-    ],
-    clima: [
-      "\u2600\uFE0F",
-      "\uD83C\uDF24\uFE0F",
-      "\u26C5",
-      "\uD83C\uDF25\uFE0F",
-      "\u2601\uFE0F",
-      "\uD83C\uDF26\uFE0F",
-      "\uD83C\uDF27\uFE0F",
-      "\u26C8\uFE0F",
-      "\uD83C\uDF29\uFE0F",
-      "\uD83C\uDF28\uFE0F",
-      "\u2744\uFE0F",
-      "\uD83C\uDF2A\uFE0F",
-      "\uD83C\uDF2B\uFE0F",
-      "\uD83D\uDCA8",
-      "\uD83C\uDF08",
-      "\u2614",
-      "\uD83C\uDF19",
-      "\uD83C\uDF03",
-      "\uD83C\uDF0C",
-      "\uD83C\uDF21\uFE0F",
-    ],
-    natureza: [
-      "\uD83C\uDF31",
-      "\uD83C\uDF3F",
-      "\u2618\uFE0F",
-      "\uD83C\uDF40",
-      "\uD83C\uDF35",
-      "\uD83C\uDF34",
-      "\uD83C\uDF33",
-      "\uD83C\uDF32",
-      "\uD83C\uDF3A",
-      "\uD83C\uDF38",
-      "\uD83C\uDF3C",
-      "\uD83C\uDF3B",
-      "\uD83C\uDF1E",
-      "\uD83C\uDF1D",
-      "\uD83C\uDF0D",
-      "\uD83C\uDF0E",
-      "\uD83C\uDF0F",
-      "\uD83E\uDEB4",
-      "\uD83C\uDF42",
-      "\uD83C\uDF41",
-      "\uD83C\uDF43",
-    ],
-  };
-  const EMOJI_TABS = [
-    { key: "recent", label: "Recentes", icon: "\uD83D\uDD58" },
-    { key: "favoritos", label: "Favoritos", icon: "\u2B50" },
-    { key: "caras", label: "Caras", icon: "\uD83D\uDE42" },
-    { key: "gestos", label: "Gestos", icon: "\uD83D\uDC4D" },
-    { key: "amor", label: "Amor", icon: "\u2764\uFE0F" },
-    { key: "natureza", label: "Natureza", icon: "\uD83C\uDF31" },
-    { key: "clima", label: "Clima", icon: "\u26C5" },
-    { key: "animais", label: "Animais", icon: "\uD83D\uDC3E" },
-    { key: "comida", label: "Comida", icon: "\uD83C\uDF54" },
-    { key: "objetos", label: "Objetos", icon: "\uD83E\uDDF0" },
-    { key: "transportes", label: "Transp.", icon: "\uD83D\uDE97" },
-  ];
   const EMOJIS = React.useMemo(() => {
     try {
       const keys = Object.keys(EMOJI_CATS).filter(
@@ -531,7 +320,13 @@ export default function Chat() {
 
   async function downloadAttachment(url, filename = "arquivo") {
     try {
-      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      const token = typeof getToken === "function" ? getToken() : null;
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await fetch(url, {
+        mode: "cors",
+        credentials: "same-origin",
+        headers,
+      });
       if (!response.ok) throw new Error("Falha ao baixar arquivo");
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -541,11 +336,18 @@ export default function Chat() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(objectUrl);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch (e) {
       setErr(e?.message || "Não foi possível baixar o arquivo");
       try {
-        window.open(url, "_blank", "noopener,noreferrer");
+        const fallback = document.createElement("a");
+        fallback.href = url;
+        fallback.rel = "noopener noreferrer";
+        fallback.target = "_blank";
+        fallback.download = filename;
+        document.body.appendChild(fallback);
+        fallback.click();
+        fallback.remove();
       } catch {}
     }
   }
@@ -777,6 +579,7 @@ export default function Chat() {
             avatarUrl:
               msg.group?.avatarUrl || msg.author?.avatarUrl || undefined,
           });
+          hideLeftIfMobile();
         } catch {}
         try {
           n.close();
@@ -906,6 +709,42 @@ export default function Chat() {
     return !!favorites?.[active?.id || ""]?.[msgId];
   }
   const leftPaneRef = useRef(null);
+  const [isDesktop, setIsDesktop] = useState(() => {
+    try {
+      return typeof window === "undefined" ? true : window.innerWidth >= 1024;
+    } catch {
+      return true;
+    }
+  });
+  const [showLeftPane, setShowLeftPane] = useState(() => {
+    try {
+      return typeof window === "undefined" ? true : window.innerWidth >= 1024;
+    } catch {
+      return true;
+    }
+  });
+  const hideLeftIfMobile = useCallback(() => {
+    try {
+      if (typeof window !== "undefined" && window.innerWidth < 1024) {
+        setShowLeftPane(false);
+      }
+    } catch {}
+  }, [setShowLeftPane]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleResize = () => {
+      try {
+        const wide = window.innerWidth >= 1024;
+        setIsDesktop(wide);
+        if (wide) {
+          setShowLeftPane(true);
+        }
+      } catch {}
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
   const [groupsCollapsed, setGroupsCollapsed] = useState(() => {
     try {
       return localStorage.getItem("chat_groups_collapsed") === "1";
@@ -1061,6 +900,7 @@ export default function Chat() {
           const foundG = g.find((x) => x.id === saved);
           if (foundG) {
             setActive(foundG);
+            hideLeftIfMobile();
             return;
           }
           const foundDM = dmList.find((x) => x.groupId === saved);
@@ -1070,42 +910,56 @@ export default function Chat() {
               name: foundDM.other?.name || "Direto",
               avatarUrl: foundDM.other?.avatarUrl || undefined,
             });
+            hideLeftIfMobile();
             return;
           }
         }
-        if (g[0]) setActive(g[0]);
+        if (g[0]) {
+          setActive(g[0]);
+          hideLeftIfMobile();
+        }
       } catch (e) {
         setErr("Falha ao carregar listas");
       }
     })();
-  }, []);
+  }, [hideLeftIfMobile]);
 
-  // Força a sidebar esquerda a permanecer visível mesmo que scripts externos tentem recolhê-la
+  // Força a sidebar esquerda a permanecer visível em telas largas caso algum script externo altere o estilo
   useEffect(() => {
     const el = leftPaneRef.current;
     if (!el) return;
-    const ensureVisible = () => {
+    if (!isDesktop) {
       try {
-        el.style.transform = "translateX(0px)";
-        el.style.transition = "none";
-        el.style.display = "flex";
-        el.classList.remove(
-          "hidden",
-          "translate-x-full",
-          "-translate-x-full",
-          "md:hidden"
-        );
+        el.style.transform = "";
+        el.style.transition = "";
+        el.style.display = "";
+      } catch {}
+      return;
+    }
+    let raf = 0;
+    const enforce = () => {
+      try {
+        if (!showLeftPane) return;
+        if (el.style.display !== "flex") {
+          el.style.display = "flex";
+        }
+        if (el.style.transition === "none") return;
+        el.style.transition = "";
+        el.style.transform = "";
       } catch {}
     };
+    const ensureVisible = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(enforce);
+    };
     ensureVisible();
-    const observer = new MutationObserver(ensureVisible);
-    observer.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
-    window.addEventListener("resize", ensureVisible);
+    const observer = new MutationObserver(() => ensureVisible());
+    observer.observe(el, { attributes: true, attributeFilter: ["style"] });
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", ensureVisible);
+      cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [isDesktop, showLeftPane]);
 
   // Bloqueia eventos de drawer globais que recolhem a sidebar em telas pequenas
   useEffect(() => {
@@ -1301,6 +1155,7 @@ export default function Chat() {
           name: dm.other?.name || "Direto",
           avatarUrl: dm.other?.avatarUrl || undefined,
         });
+        hideLeftIfMobile();
         return;
       }
     } catch {}
@@ -1328,6 +1183,7 @@ export default function Chat() {
           name: dm.other?.name || "Direto",
           avatarUrl: dm.other?.avatarUrl || undefined,
         });
+        hideLeftIfMobile();
         return;
       }
     } catch (e) {
@@ -2151,17 +2007,26 @@ export default function Chat() {
   }, [groups]);
 
   return (
-    <div className="relative flex h-full min-h-full w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
       {pushError && (
         <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow">
           {pushError}
         </div>
       )}
+      {!isDesktop && showLeftPane && (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-[1px] lg:hidden"
+          aria-label="Fechar lista de conversas"
+          onClick={() => setShowLeftPane(false)}
+        />
+      )}
       <aside
         id="chat-left-pane"
         ref={leftPaneRef}
-        className="w-72 xl:w-80 flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto"
-        style={{ transform: "translateX(0px)", display: "flex" }}
+        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto transition-transform duration-200 ease-out ${
+          isDesktop ? "" : "fixed inset-y-0 left-0 z-40 shadow-xl"
+        } ${showLeftPane ? "translate-x-0" : "-translate-x-full"} lg:static lg:shadow-none lg:translate-x-0`}
       >
         <div className="px-3 py-2 border-b border-slate-200">
           <input
@@ -2234,7 +2099,10 @@ export default function Chat() {
           return (
             <button
               key={g.id}
-              onClick={() => setActive(g)}
+              onClick={() => {
+                setActive(g);
+                hideLeftIfMobile();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -2466,8 +2334,29 @@ export default function Chat() {
         </div>
       )}
       {/* Conversation area */}
-      <div className="relative flex-1 flex min-h-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60">
+      <div className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60">
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
+          {!isDesktop && (
+            <button
+              type="button"
+              className="lg:hidden inline-flex items-center justify-center rounded border border-slate-300 p-2 text-slate-600 hover:bg-slate-100"
+              aria-label="Abrir lista de conversas"
+              onClick={() => setShowLeftPane(true)}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          )}
           <button
             type="button"
             className="flex items-center gap-3 min-w-0 truncate text-left hover:underline"
@@ -2593,18 +2482,18 @@ export default function Chat() {
         )}
         <div
           ref={listRef}
-          className={`flex-1 overflow-y-auto overscroll-contain p-4 space-y-3 ${
+          className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-3 ${
             !active ? "hidden" : ""
           }`}
         >
           {messages.map((m, i) => {
             const mine = (m.author?.id || m.authorId) === user?.id;
             const bubbleClass = mine
-              ? "max-w-[75%] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md"
-              : "max-w-[75%] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60";
+              ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
+              : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
             const lineClass = mine
-              ? "flex justify-end mb-2 items-end"
-              : "flex justify-start mb-2 items-end";
+              ? "flex justify-end mb-2 items-end min-w-0"
+              : "flex justify-start mb-2 items-end min-w-0";
             const prev = messages[i - 1];
             const showDate =
               !prev ||
@@ -3321,8 +3210,22 @@ export default function Chat() {
           )}
         </form>
       </div>
+      {!isDesktop && rightOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-[1px] lg:hidden"
+          aria-label="Fechar detalhes"
+          onClick={() => setRightOpen(false)}
+        />
+      )}
       {rightOpen && (
-        <aside className="w-[360px] max-w-sm flex-shrink-0 border-l border-slate-200 bg-white dark:bg-slate-900/70 flex h-full flex-col">
+        <aside
+          className={`flex h-full flex-col border-l border-slate-200 bg-white dark:bg-slate-900/70 transition-transform duration-200 ease-out ${
+            isDesktop
+              ? "w-[360px] max-w-sm flex-shrink-0"
+              : "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-xl"
+          }`}
+        >
           <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div className="font-semibold">Detalhes</div>
             <button
@@ -3464,6 +3367,7 @@ export default function Chat() {
                                     className="w-full text-left px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
                                     onClick={() => {
                                       setActive({ id: g.id, name: g.name });
+                                      hideLeftIfMobile();
                                     }}
                                   >
                                     {g.name}
@@ -3877,7 +3781,12 @@ function MessageText({
   }
   return (
     <div>
-      <div className="whitespace-pre-wrap break-words">{message.content}</div>
+      <div
+        className="whitespace-pre-wrap break-words"
+        style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+      >
+        {message.content}
+      </div>
       {message.editedAt && (
         <div className="text-[10px] opacity-70">(editado)</div>
       )}
@@ -4008,4 +3917,5 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     </span>
   );
 }
+
 
