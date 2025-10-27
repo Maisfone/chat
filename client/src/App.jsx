@@ -261,7 +261,6 @@ export default function App() {
       <button
         type="button"
         onClick={() => {
-          setMenuOpen(false)
           triggerAvatarPicker()
         }}
         className="w-full inline-flex items-center justify-center gap-2 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60 disabled:opacity-50"
@@ -413,9 +412,8 @@ export default function App() {
               {avatarErr && <span className="text-[10px] text-red-600 text-center max-w-[64px]">{avatarErr}</span>}
             </div>
           ) : (
-            <div className="relative">
+            <div ref={setProfileMenuRoot} className="relative">
               <button
-                ref={setProfileMenuRoot}
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
                 className="w-full inline-flex items-center gap-3 rounded border border-slate-300 dark:border-slate-600 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left"

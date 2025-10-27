@@ -25,6 +25,25 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
+function renderFormattedText(text) {
+  if (!text) return null;
+  const parts = text.split(/(\*[^*\n]+\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <strong key={index}>{part.slice(1, -1)}</strong>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+}
+
 export default function Chat() {
   // Lists and active conversation
   const [groups, setGroups] = useState([]);
@@ -137,42 +156,84 @@ export default function Chat() {
     messageMenuContainerRef.current = node;
   }, []);
   const [highlightId, setHighlightId] = useState(null);
+  const highlightMessage = useCallback(
+    (id, duration = 2000) => {
+      if (!id) return;
+      setHighlightId(id);
+      if (highlightTimeoutRef.current) {
+        try {
+          clearTimeout(highlightTimeoutRef.current);
+        } catch {}
+      }
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightId((current) => (current === id ? null : current));
+        highlightTimeoutRef.current = null;
+      }, duration);
+    },
+    []
+  );
+  const scrollToMessage = useCallback(
+    (messageId) => {
+      if (!messageId || typeof document === "undefined") return false;
+      const el = document.getElementById(`msg-${messageId}`);
+      if (!el) return false;
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+      highlightMessage(messageId);
+      return true;
+    },
+    [highlightMessage]
+  );
   const [editId, setEditId] = useState("");
   const [editText, setEditText] = useState("");
   const [convQuery, setConvQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const emojiBtnRef = useRef(null);
   // Posição inicial de fallback para o popover (caso cálculo ainda não tenha ocorrido)
-  const [emojiPos, setEmojiPos] = useState({ left: 4, bottom: 120, width: 360, maxHeight: 416 });
+  const [emojiPos, setEmojiPos] = useState({
+    left: 4,
+    bottom: 120,
+    width: 360,
+    maxHeight: 416,
+  });
   const composerRef = useRef(null);
   function openEmojiPopover() {
-  try {
-    const btn = emojiBtnRef.current;
-    const formEl = composerRef.current;
-    const vw = typeof window !== "undefined" ? window.innerWidth : 800;
-    const vh = typeof window !== "undefined" ? window.innerHeight : 600;
-    const pad = 4;
-    const lift = 4; // distância extra acima do form (4px)
-    const popMax = Math.min(26 * 16, vh - pad * 2);
-    const getRect = (el) => (el && el.getBoundingClientRect ? el.getBoundingClientRect() : null);
-    const rForm = getRect(formEl);
-    const rBtn = getRect(btn);
-    const source = rForm || rBtn;
-    if (source) {
-      const baseWidth = rForm ? Math.min(420, Math.max(320, (rForm.width || 420))) : Math.min(420, Math.max(320, vw * 0.95));
-      const desiredWidth = Math.min(baseWidth, vw - pad * 2);
-      const anchorLeft = rForm ? rForm.left : (rBtn ? rBtn.left : pad);
-      const left = pad;
-      const anchorTop = rForm ? rForm.top : (rBtn ? rBtn.top : vh / 2);
-      // bottom = distância da borda inferior do viewport até o topo do form + lift
-      const bottom = Math.max(pad, (vh - anchorTop) + lift);
-      setEmojiPos({ left, bottom, width: desiredWidth, maxHeight: popMax });
-    } else {
-      setEmojiPos({ left: pad, bottom: 120, width: Math.min(420, Math.max(320, vw * 0.95)), maxHeight: popMax });
-    }
-  } catch {}
-  setShowEmoji(true);
-}
+    try {
+      const btn = emojiBtnRef.current;
+      const formEl = composerRef.current;
+      const vw = typeof window !== "undefined" ? window.innerWidth : 800;
+      const vh = typeof window !== "undefined" ? window.innerHeight : 600;
+      const pad = 4;
+      const lift = 4; // distância extra acima do form (4px)
+      const popMax = Math.min(26 * 16, vh - pad * 2);
+      const getRect = (el) =>
+        el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      const rForm = getRect(formEl);
+      const rBtn = getRect(btn);
+      const source = rForm || rBtn;
+      if (source) {
+        const baseWidth = rForm
+          ? Math.min(420, Math.max(320, rForm.width || 420))
+          : Math.min(420, Math.max(320, vw * 0.95));
+        const desiredWidth = Math.min(baseWidth, vw - pad * 2);
+        const anchorLeft = rForm ? rForm.left : rBtn ? rBtn.left : pad;
+        const left = pad;
+        const anchorTop = rForm ? rForm.top : rBtn ? rBtn.top : vh / 2;
+        // bottom = distância da borda inferior do viewport até o topo do form + lift
+        const bottom = Math.max(pad, vh - anchorTop + lift);
+        setEmojiPos({ left, bottom, width: desiredWidth, maxHeight: popMax });
+      } else {
+        setEmojiPos({
+          left: pad,
+          bottom: 120,
+          width: Math.min(420, Math.max(320, vw * 0.95)),
+          maxHeight: popMax,
+        });
+      }
+    } catch {}
+    setShowEmoji(true);
+  }
   // Sidebar context menu (right-click)
   const [sideMenu, setSideMenu] = useState({
     open: false,
@@ -245,6 +306,18 @@ export default function Chat() {
   const setEmojiSectionRef = (key) => (el) => {
     if (el) emojiSectionRefs.current[key] = el;
   };
+  useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) {
+        try {
+          clearTimeout(highlightTimeoutRef.current);
+        } catch {}
+        highlightTimeoutRef.current = null;
+      }
+    },
+    []
+  );
+
   const emojiOrder = [
     "recent",
     "favoritos",
@@ -306,6 +379,11 @@ export default function Chat() {
   const nav = useNavigate();
   const [recPendingFile, setRecPendingFile] = useState(null);
   const [recPreviewUrl, setRecPreviewUrl] = useState("");
+  const recAudioRef = useRef(null);
+  const recStartedAtRef = useRef(null);
+  const highlightTimeoutRef = useRef(null);
+  const [recPreviewDuration, setRecPreviewDuration] = useState("");
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
 
   // Conversation menu (header)
@@ -964,13 +1042,19 @@ export default function Chat() {
   });
   useEffect(() => {
     try {
-      localStorage.setItem("chat_groups_collapsed", groupsCollapsed ? "1" : "0");
+      localStorage.setItem(
+        "chat_groups_collapsed",
+        groupsCollapsed ? "1" : "0"
+      );
     } catch {}
   }, [groupsCollapsed]);
 
   useEffect(() => {
     try {
-      localStorage.setItem("chat_people_collapsed", peopleCollapsed ? "1" : "0");
+      localStorage.setItem(
+        "chat_people_collapsed",
+        peopleCollapsed ? "1" : "0"
+      );
     } catch {}
   }, [peopleCollapsed]);
   async function toggleFav(m) {
@@ -1423,7 +1507,10 @@ export default function Chat() {
         });
         if (!alreadyHad) {
           ensureConversationOrder([
-            { id: dm.groupId, ts: coerceTimestamp(dm.lastMessageAt) || Date.now() },
+            {
+              id: dm.groupId,
+              ts: coerceTimestamp(dm.lastMessageAt) || Date.now(),
+            },
           ]);
         }
         setActive({
@@ -1592,11 +1679,15 @@ export default function Chat() {
     return () => clearTimeout(t);
   }, [messages, active?.id]);
 
+  const [sending, setSending] = useState(false);
+
   async function sendMessage(e) {
     if (e && e.preventDefault) e.preventDefault();
     setErr("");
-    if (!active) return;
+    if (!active || sending) return;
+    let didSend = false;
     try {
+      setSending(true);
       const hasText = Boolean((text || "").trim());
       const hasFiles = attachments.length > 0;
       const replyId = replyTo?.id || null;
@@ -1619,6 +1710,7 @@ export default function Chat() {
         });
         updateConversationActivity(created, { mine: true });
         setText("");
+        didSend = true;
       }
       if (hasFiles) {
         for (const item of attachments) {
@@ -1640,6 +1732,7 @@ export default function Chat() {
             return [...prev, createdUpload];
           });
           updateConversationActivity(createdUpload, { mine: true });
+          didSend = true;
         }
         clearAttachments();
       }
@@ -1648,6 +1741,13 @@ export default function Chat() {
       }
     } catch (e) {
       setErr(e.message || "Falha ao enviar mensagem");
+    } finally {
+      setSending(false);
+      if (didSend) {
+        try {
+          inputRef.current?.focus();
+        } catch {}
+      }
     }
   }
 
@@ -1670,16 +1770,7 @@ export default function Chat() {
 
   function goToFirstReply(m) {
     const target = messages.find((x) => x.replyTo?.id === m.id);
-    if (target) {
-      const el = document.getElementById(`msg-${target.id}`);
-      if (el) {
-        try {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-        } catch {}
-        setHighlightId(target.id);
-        setTimeout(() => setHighlightId(null), 2000);
-      }
-    }
+    if (target) scrollToMessage(target.id);
   }
 
   // Compute matches when search or messages change
@@ -1708,12 +1799,11 @@ export default function Chat() {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
         } catch {}
       }
-      setHighlightId(ids[0]);
-      setTimeout(() => setHighlightId(null), 1500);
+      highlightMessage(ids[0], 1500);
     } else {
       setSearchIndex(-1);
     }
-  }, [searchQuery, messages, active?.id]);
+  }, [searchQuery, messages, active?.id, highlightMessage]);
 
   function jumpToMatch(next = true) {
     if (!searchMatches.length) return;
@@ -1730,8 +1820,7 @@ export default function Chat() {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
       } catch {}
     }
-    setHighlightId(id);
-    setTimeout(() => setHighlightId(null), 1500);
+    highlightMessage(id, 1500);
   }
 
   // Emoji insert helper
@@ -1791,6 +1880,7 @@ export default function Chat() {
     setRecError("");
     if (recording) return;
     try {
+      if (recPendingFile) cancelPendingAudio();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
       const mime =
@@ -1805,24 +1895,33 @@ export default function Chat() {
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
-      mr.onstop = async () => {
+      mr.onstop = () => {
         try {
+          if (!chunks.length) {
+            setRecError("Nenhum áudio foi capturado");
+            return;
+          }
           const blob = new Blob(chunks, { type: mime });
-          const f = new File([blob], `rec-${Date.now()}.webm`, { type: mime });
-          const form = new FormData();
-          form.append("file", f);
-          if (active?.id)
-            await api.upload(`/messages/${active.id}/upload?type=audio`, form);
+          const file = new File([blob], `rec-${Date.now()}.webm`, {
+            type: mime,
+          });
+          try {
+            if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
+          } catch {}
+          const url = URL.createObjectURL(blob);
+          setRecPendingFile(file);
+          setRecPreviewUrl(url);
+          setRecError("");
         } catch (e) {
-          setRecError(e.message || "Falha ao salvar Ã¡udio");
+          setRecError(e.message || "Falha ao processar áudio");
         } finally {
           cleanupRecording();
         }
       };
       mr.start();
+      recStartedAtRef.current = Date.now();
       setRecording(true);
       setRecTime(0);
-      recTimerRef.current = setInterval(() => setRecTime((t) => t + 1), 1000);
     } catch (e) {
       setRecError("Acesso ao microfone negado ou indisponível");
       cleanupRecording();
@@ -1842,6 +1941,7 @@ export default function Chat() {
       recTimerRef.current = null;
     }
     setRecTime(0);
+    recStartedAtRef.current = null;
     try {
       mediaStreamRef.current?.getTracks?.().forEach((t) => t.stop());
     } catch {}
@@ -1849,6 +1949,52 @@ export default function Chat() {
     mediaRecRef.current = null;
   }
   useEffect(() => {
+    if (!recording) {
+      if (recTimerRef.current) {
+        try {
+          clearInterval(recTimerRef.current);
+        } catch {}
+        recTimerRef.current = null;
+      }
+      return;
+    }
+    const startedAt = recStartedAtRef.current ?? Date.now();
+    recStartedAtRef.current = startedAt;
+    const updateTime = () => {
+      const elapsed = Math.max(
+        0,
+        Math.floor((Date.now() - startedAt) / 1000)
+      );
+      setRecTime(elapsed);
+    };
+    updateTime();
+    if (recTimerRef.current) {
+      try {
+        clearInterval(recTimerRef.current);
+      } catch {}
+    }
+    recTimerRef.current = setInterval(updateTime, 1000);
+    return () => {
+      if (recTimerRef.current) {
+        try {
+          clearInterval(recTimerRef.current);
+        } catch {}
+        recTimerRef.current = null;
+      }
+    };
+  }, [recording]);
+  useEffect(() => {
+    const audio = recAudioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {}
+    }
+    setPreviewPlaying(false);
+    if (!recPreviewUrl) {
+      setRecPreviewDuration("");
+    }
     return () => {
       try {
         if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
@@ -1856,9 +2002,46 @@ export default function Chat() {
     };
   }, [recPreviewUrl]);
 
+  const handlePreviewLoaded = () => {
+    const audio = recAudioRef.current;
+    if (!audio) return;
+    const formatted = formatDuration(audio.duration);
+    setRecPreviewDuration(formatted);
+  };
+
+  const handlePreviewEnded = () => {
+    const audio = recAudioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {}
+    }
+    setPreviewPlaying(false);
+  };
+
+  const handlePreviewPause = () => {
+    setPreviewPlaying(false);
+  };
+
+  const togglePreviewPlayback = () => {
+    if (sending) return;
+    const audio = recAudioRef.current;
+    if (!audio) return;
+    if (previewPlaying) {
+      audio.pause();
+    } else {
+      audio
+        .play()
+        .then(() => setPreviewPlaying(true))
+        .catch(() => setPreviewPlaying(false));
+    }
+  };
+
   async function sendPendingAudio() {
     if (!recPendingFile || !active?.id) return;
     try {
+      setSending(true);
       const form = new FormData();
       form.append("file", recPendingFile);
       const created = await api.upload(
@@ -1869,28 +2052,47 @@ export default function Chat() {
         prev.some((m) => m.id === created.id) ? prev : [...prev, created]
       );
       updateConversationActivity(created, { mine: true });
+      const audio = recAudioRef.current;
+      if (audio) {
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+        } catch {}
+      }
+      setPreviewPlaying(false);
       setRecPendingFile(null);
+      setRecError("");
       try {
         if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
       } catch {}
       setRecPreviewUrl("");
+      setRecPreviewDuration("");
     } catch (e) {
       setRecError(e?.message || "Falha ao Enviar áudio");
+    } finally {
+      setSending(false);
     }
   }
   function cancelPendingAudio() {
+    const audio = recAudioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {}
+    }
+    setPreviewPlaying(false);
     setRecPendingFile(null);
+    setRecError("");
     try {
       if (recPreviewUrl) URL.revokeObjectURL(recPreviewUrl);
     } catch {}
     setRecPreviewUrl("");
+    setRecPreviewDuration("");
   }
 
   // Right sidebar logic
-  function hydrateProfileEditor(
-    source = meProfile,
-    { force = false } = {}
-  ) {
+  function hydrateProfileEditor(source = meProfile, { force = false } = {}) {
     const me = source || {};
     if (force || !pfName) setPfName(me?.name || "");
     if (force || !pfPhone) setPfPhone(me?.phone || "");
@@ -2193,9 +2395,7 @@ export default function Chat() {
         const updates = {};
         for (const g of pending) {
           try {
-            const list = toArray(
-              await api.get(`/messages/${g.id}?take=1`)
-            );
+            const list = toArray(await api.get(`/messages/${g.id}?take=1`));
             const m = list[0] || null;
             const last = m?.createdAt ? new Date(m.createdAt).getTime() : 0;
             const mine = (m?.author?.id || m?.authorId) === user?.id;
@@ -2258,7 +2458,9 @@ export default function Chat() {
         ref={leftPaneRef}
         className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto transition-transform duration-200 ease-out ${
           isDesktop ? "" : "fixed inset-y-0 left-0 z-40 shadow-xl"
-        } ${showLeftPane ? "translate-x-0" : "-translate-x-full"} lg:static lg:shadow-none lg:translate-x-0`}
+        } ${
+          showLeftPane ? "translate-x-0" : "-translate-x-full"
+        } lg:static lg:shadow-none lg:translate-x-0`}
       >
         <div className="px-3 py-2 border-b border-slate-200">
           <input
@@ -2311,92 +2513,99 @@ export default function Chat() {
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 24 24"
               fill="currentColor"
-              className={`w-4 h-4 transition-transform ${groupsCollapsed ? "-rotate-90" : "rotate-0"}`}
+              className={`w-4 h-4 transition-transform ${
+                groupsCollapsed ? "-rotate-90" : "rotate-0"
+              }`}
             >
               <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
             </svg>
           </button>
         </div>
-        {!groupsCollapsed && filteredGroups.map((g) => {
-          const lastAt = g?._lastAt || 0;
-          const lastLabel = lastAt
-            ? new Date(lastAt).toLocaleTimeString("pt-BR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : "";
-          const preview = g?._lastPreview || "";
-          const isPinned = !!pinned?.[g.id];
-          const isMuted = !!muted?.[g.id];
-          return (
-            <button
-              key={g.id}
-              onClick={() => {
-                setActive(g);
-                hideLeftIfMobile();
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setSideMenu({
-                  open: true,
-                  type: "group",
-                  id: g.id,
-                  groupId: g.id,
-                  x: e.clientX,
-                  y: e.clientY,
-                });
-              }}
-              className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border ${
-                active?.id === g.id
-                  ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
-                  : "border-transparent hover:border-slate-200 dark:border-transparent dark:hover:border-slate-600"
-              } flex items-center justify-between transition-colors`}
-              title={g.name || ""}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-left" title={g.name || ""}>
-                    {g.name}
-                  </span>
-                  {lastLabel && (
-                    <span className="text-[11px] text-slate-500">
-                      {lastLabel}
+        {!groupsCollapsed &&
+          filteredGroups.map((g) => {
+            const lastAt = g?._lastAt || 0;
+            const lastLabel = lastAt
+              ? new Date(lastAt).toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "";
+            const preview = g?._lastPreview || "";
+            const isPinned = !!pinned?.[g.id];
+            const isMuted = !!muted?.[g.id];
+            return (
+              <button
+                key={g.id}
+                onClick={() => {
+                  setActive(g);
+                  hideLeftIfMobile();
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSideMenu({
+                    open: true,
+                    type: "group",
+                    id: g.id,
+                    groupId: g.id,
+                    x: e.clientX,
+                    y: e.clientY,
+                  });
+                }}
+                className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border ${
+                  active?.id === g.id
+                    ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
+                    : "border-transparent hover:border-slate-200 dark:border-transparent dark:hover:border-slate-600"
+                } flex items-center justify-between transition-colors`}
+                title={g.name || ""}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-left" title={g.name || ""}>
+                      {g.name}
+                    </span>
+                    {lastLabel && (
+                      <span className="text-[11px] text-slate-500">
+                        {lastLabel}
+                      </span>
+                    )}
+                  </div>
+                  {preview && (
+                    <div
+                      className="text-slate-500 truncate max-w-[220px] text-xs"
+                      title={preview}
+                    >
+                      {preview}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {g._unread > 0 && (
+                    <span className="ml-2 min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
+                      {g._unread}
                     </span>
                   )}
                 </div>
-                {preview && (
-                  <div
-                    className="text-slate-500 truncate max-w-[220px] text-xs"
-                    title={preview}
-                  >
-                    {preview}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {g._unread > 0 && (
-                  <span className="ml-2 min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
-                    {g._unread}
-                  </span>
-                )}
-              </div>
-            </button>
-          );
-        })}
+              </button>
+            );
+          })}
         <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800 flex items-center justify-between">
           <span>Pessoas</span>
           <button
             type="button"
             className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-transform"
             onClick={() => setPeopleCollapsed((v) => !v)}
-            aria-label={peopleCollapsed ? "Expandir pessoas" : "Ocultar pessoas"}
+            aria-label={
+              peopleCollapsed ? "Expandir pessoas" : "Ocultar pessoas"
+            }
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 24 24"
               fill="currentColor"
-              className={`w-4 h-4 transition-transform ${peopleCollapsed ? "-rotate-90" : "rotate-0"}`}
+              className={`w-4 h-4 transition-transform ${
+                peopleCollapsed ? "-rotate-90" : "rotate-0"
+              }`}
             >
               <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
             </svg>
@@ -2405,97 +2614,97 @@ export default function Chat() {
         {!peopleCollapsed && (
           <div id="people-list" className="px-3 py-2 flex flex-col gap-1">
             {filteredPeople.map((p) => {
-            const dmInfo = dmByOtherId[p.id] || null;
-            const unread = dmInfo?._unread || 0;
-            const lastAt = dmInfo?._lastAt || 0;
-            const lastLabel = lastAt
-              ? new Date(lastAt).toLocaleTimeString("pt-BR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "";
-            const preview = dmInfo?._lastPreview || "";
-            const isPinned = !!pinned?.[p.id];
-            const isSelected = !!(
-              active?.id &&
-              dmInfo?.groupId &&
-              active.id === dmInfo.groupId
-            );
-            return (
-              <button
-                key={p.id}
-                onClick={() => startConversation(p.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSideMenu({
-                    open: true,
-                    type: "user",
-                    id: p.id,
-                    groupId: dmInfo?.groupId || null,
-                    x: e.clientX,
-                    y: e.clientY,
-                  });
-                }}
-                className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors ${
-                  isSelected
-                    ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
-                    : "hover:bg-slate-50 dark:hover:bg-slate-700/60 border-transparent hover:border-slate-200 dark:hover:border-slate-600"
-                }`}
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <Avatar
-                    url={p.avatarUrl}
-                    name={p.name}
-                    size={40}
-                    status={presence[p.id] || p.status}
-                    showStatus={true}
-                  />
-                  <span className="flex flex-col items-start min-w-0">
-                    <span
-                      className="truncate font-medium text-sm"
-                      title={p.name || ""}
-                    >
-                      {p.name}
-                    </span>
-                    {p.status && (
+              const dmInfo = dmByOtherId[p.id] || null;
+              const unread = dmInfo?._unread || 0;
+              const lastAt = dmInfo?._lastAt || 0;
+              const lastLabel = lastAt
+                ? new Date(lastAt).toLocaleTimeString("pt-BR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "";
+              const preview = dmInfo?._lastPreview || "";
+              const isPinned = !!pinned?.[p.id];
+              const isSelected = !!(
+                active?.id &&
+                dmInfo?.groupId &&
+                active.id === dmInfo.groupId
+              );
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => startConversation(p.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSideMenu({
+                      open: true,
+                      type: "user",
+                      id: p.id,
+                      groupId: dmInfo?.groupId || null,
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
+                  }}
+                  className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors ${
+                    isSelected
+                      ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
+                      : "hover:bg-slate-50 dark:hover:bg-slate-700/60 border-transparent hover:border-slate-200 dark:hover:border-slate-600"
+                  }`}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Avatar
+                      url={p.avatarUrl}
+                      name={p.name}
+                      size={40}
+                      status={presence[p.id] || p.status}
+                      showStatus={true}
+                    />
+                    <span className="flex flex-col items-start min-w-0">
                       <span
-                        className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${
-                          String(p.status).toLowerCase() === "online"
-                            ? "bg-green-50 text-green-700 border-green-200"
-                            : "bg-slate-50 text-slate-600 border-slate-200"
-                        }`}
+                        className="truncate font-medium text-sm"
+                        title={p.name || ""}
                       >
-                        {p.status}
+                        {p.name}
+                      </span>
+                      {p.status && (
+                        <span
+                          className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${
+                            String(p.status).toLowerCase() === "online"
+                              ? "bg-green-50 text-green-700 border-green-200"
+                              : "bg-slate-50 text-slate-600 border-slate-200"
+                          }`}
+                        >
+                          {p.status}
+                        </span>
+                      )}
+                      {preview && (
+                        <span
+                          className="truncate text-xs text-slate-500 max-w-[180px]"
+                          title={preview}
+                        >
+                          {preview}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    {lastLabel && (
+                      <span className="text-[11px] text-slate-500">
+                        {lastLabel}
                       </span>
                     )}
-                    {preview && (
-                      <span
-                        className="truncate text-xs text-slate-500 max-w-[180px]"
-                        title={preview}
-                      >
-                        {preview}
+                    {unread > 0 && (
+                      <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
+                        {unread}
                       </span>
+                    )}
+                    {Boolean(pinned?.[p.id]) && (
+                      <IconStar className="w-4 h-4 text-amber-500" />
                     )}
                   </span>
-                </span>
-                <span className="flex items-center gap-2 shrink-0">
-                  {lastLabel && (
-                    <span className="text-[11px] text-slate-500">
-                      {lastLabel}
-                    </span>
-                  )}
-                  {unread > 0 && (
-                    <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
-                      {unread}
-                    </span>
-                  )}
-                  {Boolean(pinned?.[p.id]) && (
-                    <IconStar className="w-4 h-4 text-amber-500" />
-                  )}
-                </span>
-              </button>
-            );
+                </button>
+              );
             })}
           </div>
         )}
@@ -2777,7 +2986,12 @@ export default function Chat() {
                       </div>
                     )}
                     {m.replyTo && (
-                      <div className="mb-1 pl-2 border-l-4 border-blue-400 text-xs text-slate-600">
+                      <button
+                        type="button"
+                        onClick={() => scrollToMessage(m.replyTo.id)}
+                        className="mb-1 w-full text-left pl-2 border-l-4 border-blue-400 text-xs text-slate-600 hover:bg-blue-50 focus:bg-blue-100 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded-sm transition dark:hover:bg-slate-800/60 dark:focus:bg-slate-800/90"
+                        title="Abrir mensagem original"
+                      >
                         <div className="font-medium">
                           {m.replyTo.author?.name || "Mensagem"}
                         </div>
@@ -2790,7 +3004,7 @@ export default function Chat() {
                             ? "Áudio"
                             : "Anexo"}
                         </div>
-                      </div>
+                      </button>
                     )}
                     {m.deletedAt ? (
                       <div className="italic opacity-70">Mensagem apagada</div>
@@ -3024,27 +3238,108 @@ export default function Chat() {
             >
               Cancelar
             </button>
+            {recording && !((text || "").trim() || attachments.length) && (
+              <span
+                className="text-xs text-red-600 inline-flex items-center gap-1"
+                aria-live="polite"
+              >
+                <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
+                {recTime > 0 ? `${recTime}s` : "REC"}
+              </span>
+            )}
           </div>
         )}
 
         {recPendingFile && (
-          <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-center gap-3">
-            <audio src={recPreviewUrl} controls className="w-64" />
-            <div className="text-xs text-slate-600">PrÃ©-escuta do Ã¡udio</div>
-            <div className="ml-auto flex items-center gap-2">
+          <div className="px-3 py-2 border-t border-slate-200 bg-white dark:bg-slate-900">
+            <audio
+              ref={recAudioRef}
+              src={recPreviewUrl}
+              onLoadedMetadata={handlePreviewLoaded}
+              onEnded={handlePreviewEnded}
+              onPause={handlePreviewPause}
+              onPlay={() => setPreviewPlaying(true)}
+              className="hidden"
+              preload="metadata"
+            />
+            <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
-                className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
-                onClick={sendPendingAudio}
+                onClick={togglePreviewPlayback}
+                className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition ${
+                  previewPlaying
+                    ? "bg-red-600 text-white hover:bg-red-500"
+                    : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                }`}
+                aria-label={
+                  previewPlaying ? "Pausar pré-escuta" : "Reproduzir pré-escuta"
+                }
+                disabled={sending}
               >
-                Enviar áudio
+                {previewPlaying ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="w-5 h-5"
+                  >
+                    <path d="M7 5.25h2.5c.414 0 .75.336.75.75v12a.75.75 0 0 1-.75.75H7a.75.75 0 0 1-.75-.75V6A.75.75 0 0 1 7 5.25Zm7.5 0H17c.414 0 .75.336.75.75v12a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1-.75-.75V6a.75.75 0 0 1 .75-.75Z" />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    className="w-5 h-5"
+                  >
+                    <path d="M5.87 3.52 18.5 10.3a1.5 1.5 0 0 1 0 2.6L5.87 19.68A1.5 1.5 0 0 1 3.5 18.5V5.5a1.5 1.5 0 0 1 2.37-1.98Z" />
+                  </svg>
+                )}
+              </button>
+              <div className="flex flex-col leading-tight text-right min-w-[120px]">
+                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Pré-escuta do áudio
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {recPreviewDuration
+                    ? `Duração ${recPreviewDuration}`
+                    : recPendingFile
+                    ? `Tamanho ${(recPendingFile.size / (1024 * 1024)).toFixed(
+                        1
+                      )} MB`
+                    : ""}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={sendPendingAudio}
+                disabled={sending}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 transition"
+                aria-label="Enviar áudio"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z" />
+                </svg>
               </button>
               <button
                 type="button"
-                className="px-3 py-1.5 rounded border border-slate-300 hover:bg-slate-100"
                 onClick={cancelPendingAudio}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-600 transition"
+                aria-label="Excluir áudio"
               >
-                Descartar
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path d="M9 3.75A.75.75 0 0 1 9.75 3h4.5a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.522l-.73 12.035A2.25 2.25 0 0 1 14.508 20H9.492a2.25 2.25 0 0 1-2.19-1.965L6.57 6.5H6a.75.75 0 0 1 0-1.5h3V3.75Zm1.5 3.75a.75.75 0 0 0-1.5 0v9a.75.75 0 0 0 1.5 0v-9Zm4.5 0a.75.75 0 0 0-1.5 0v9a.75.75 0 0 0 1.5 0v-9Z" />
+                </svg>
               </button>
             </div>
           </div>
@@ -3099,15 +3394,19 @@ export default function Chat() {
         )}
 
         <form
-          ref={composerRef} onSubmit={sendMessage}
+          ref={composerRef}
+          onSubmit={sendMessage}
           className={`chat-composer relative flex flex-col gap-2 p-3 border-t border-slate-200/70 bg-white/90 dark:bg-slate-900/70 backdrop-blur ${
             !active ? "hidden" : ""
           }`}
         >
-          <div className="flex w-full items-center gap-2">
+          <div className="flex w-full items-center gap-2 flex-wrap md:flex-nowrap">
             <button
               type="button"
-              ref={emojiBtnRef} onClick={() => (showEmoji ? setShowEmoji(false) : openEmojiPopover())}
+              ref={emojiBtnRef}
+              onClick={() =>
+                showEmoji ? setShowEmoji(false) : openEmojiPopover()
+              }
               title="Emojis"
               className="flex-shrink-0 px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
               aria-label="Emojis"
@@ -3203,25 +3502,34 @@ export default function Chat() {
               type="button"
               onClick={() => {
                 if ((text || "").trim() || attachments.length) {
-                  sendMessage();
+                  if (!sending) sendMessage();
                 } else {
                   recording ? stopRecording() : startRecording();
                 }
               }}
               className={`${
-                (text || "").trim() || attachments.length
+                sending
+                  ? "bg-blue-400 text-white cursor-wait"
+                  : (text || "").trim() || attachments.length
                   ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
                   : recording
                   ? "bg-red-600 text-white hover:bg-red-700 shadow"
                   : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
-              } inline-flex items-center justify-center rounded-full w-10 h-10 flex-shrink-0`}
+              } inline-flex items-center justify-center rounded-full h-10 flex-shrink-0 transition ${
+                recording && !((text || "").trim() || attachments.length)
+                  ? "px-4 gap-2"
+                  : "w-10"
+              }`}
               title={
-                (text || "").trim() || attachments.length
+                sending
+                  ? "Enviando..."
+                  : (text || "").trim() || attachments.length
                   ? "Enviar"
                   : recording
                   ? "Parar gravação"
                   : "Gravar áudio"
               }
+              disabled={sending}
             >
               {(text || "").trim() || attachments.length ? (
                 <svg
@@ -3252,21 +3560,33 @@ export default function Chat() {
                 </svg>
               )}
             </button>
+            {recording && !((text || "").trim() || attachments.length) && (
+              <span
+                className="text-xs text-red-600 inline-flex items-center gap-1"
+                aria-live="polite"
+              >
+                <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
+                {recTime > 0 ? `${recTime}s` : "REC"}
+              </span>
+            )}
           </div>
-          {recording && (
-            <span
-              className="text-xs text-red-600 inline-flex items-center gap-1"
-              aria-live="polite"
-            >
-              <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
-              {recTime}s
-            </span>
+          {((text || "").trim() || attachments.length) && err && (
+            <div className="text-sm text-red-600">{err}</div>
           )}
-          {err && <div className="text-sm text-red-600">{err}</div>}
-          {recError && <div className="text-sm text-red-600">{recError}</div>}
+          {!(text || "").trim() && !attachments.length && recError && (
+            <div className="text-sm text-red-600">{recError}</div>
+          )}
 
           {showEmoji && (
-            <div className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden" style={{ left: Math.max(4, emojiPos.left), bottom: Math.max(4, emojiPos.bottom || 0), width: `${emojiPos.width || 360}px`, maxHeight: `${emojiPos.maxHeight || 416}px` }}>
+            <div
+              className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden"
+              style={{
+                left: Math.max(4, emojiPos.left),
+                bottom: Math.max(4, emojiPos.bottom || 0),
+                width: `${emojiPos.width || 360}px`,
+                maxHeight: `${emojiPos.maxHeight || 416}px`,
+              }}
+            >
               <button
                 type="button"
                 className="absolute top-2 right-2 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
@@ -3279,69 +3599,69 @@ export default function Chat() {
               {/* Campo de busca removido: navegação somente por rolagem */}
               {/* Atalhos removidos: navegação apenas por rolagem */}
               {false && (
-                  <>
-                    <div
-                      ref={setEmojiSectionRef("recent")}
-                      className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
-                    >
-                      Recentes
-                    </div>
-                    <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
-                      {recentEmojis.map((e) => (
-                        <button
-                          key={`r-${e}`}
-                          type="button"
-                          onClick={() => insertEmoji(e)}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            toggleFavEmoji(e);
-                          }}
-                          className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
-                            (favoriteEmojis || []).includes(e)
-                              ? "bg-yellow-50"
-                              : ""
-                          }`}
-                        >
-                          {(favoriteEmojis || []).includes(e) && (
-                            <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
-                              ★
-                            </span>
-                          )}
-                          {e}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              {false && (
-                  <>
-                    <div
-                      ref={setEmojiSectionRef("favoritos")}
-                      className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
-                    >
-                      Favoritos
-                    </div>
-                    <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
-                      {(favoriteEmojis || []).map((e) => (
-                        <button
-                          key={`f-${e}`}
-                          type="button"
-                          onClick={() => insertEmoji(e)}
-                          onContextMenu={(ev) => {
-                            ev.preventDefault();
-                            toggleFavEmoji(e);
-                          }}
-                          className="relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 bg-yellow-50"
-                        >
+                <>
+                  <div
+                    ref={setEmojiSectionRef("recent")}
+                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                  >
+                    Recentes
+                  </div>
+                  <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
+                    {recentEmojis.map((e) => (
+                      <button
+                        key={`r-${e}`}
+                        type="button"
+                        onClick={() => insertEmoji(e)}
+                        onContextMenu={(ev) => {
+                          ev.preventDefault();
+                          toggleFavEmoji(e);
+                        }}
+                        className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
+                          (favoriteEmojis || []).includes(e)
+                            ? "bg-yellow-50"
+                            : ""
+                        }`}
+                      >
+                        {(favoriteEmojis || []).includes(e) && (
                           <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
                             ★
                           </span>
-                          {e}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
+                        )}
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {false && (
+                <>
+                  <div
+                    ref={setEmojiSectionRef("favoritos")}
+                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                  >
+                    Favoritos
+                  </div>
+                  <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
+                    {(favoriteEmojis || []).map((e) => (
+                      <button
+                        key={`f-${e}`}
+                        type="button"
+                        onClick={() => insertEmoji(e)}
+                        onContextMenu={(ev) => {
+                          ev.preventDefault();
+                          toggleFavEmoji(e);
+                        }}
+                        className="relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 bg-yellow-50"
+                      >
+                        <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
+                          ★
+                        </span>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
               {false ? (
                 <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1">
                   {EMOJIS.filter((e) => e.includes(emojiQuery.trim())).map(
@@ -3468,504 +3788,527 @@ export default function Chat() {
             >
               ×
             </button>
+            {recording && !((text || "").trim() || attachments.length) && (
+              <span
+                className="text-xs text-red-600 inline-flex items-center gap-1"
+                aria-live="polite"
+              >
+                <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
+                {recTime > 0 ? `${recTime}s` : "REC"}
+              </span>
+            )}
           </div>
           <div className="px-4 pt-2 border-b border-slate-200">
             <div className="inline-flex items-center gap-2 text-sm">
-            <button
-              className={`px-3 py-2 ${
-                rightTab === "perfil"
-                  ? "border-b-2 border-blue-600 text-blue-700"
-                  : "text-slate-600 hover:text-slate-800"
-              }`}
-              onClick={() => setRightTab("perfil")}
-            >
-              Perfil
-            </button>
-            <button
-              className={`px-3 py-2 ${
-                rightTab === "arquivos"
-                  ? "border-b-2 border-blue-600 text-blue-700"
-                  : "text-slate-600 hover:text-slate-800"
-              }`}
-              onClick={() => setRightTab("arquivos")}
-            >
-              Arquivos
-            </button>
-            <button
-              className={`px-3 py-2 ${
-                rightTab === "favoritos"
-                  ? "border-b-2 border-blue-600 text-blue-700"
-                  : "text-slate-600 hover:text-slate-800"
-              }`}
-              onClick={() => setRightTab("favoritos")}
-            >
-              Favoritos
-            </button>
+              <button
+                className={`px-3 py-2 ${
+                  rightTab === "perfil"
+                    ? "border-b-2 border-blue-600 text-blue-700"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+                onClick={() => setRightTab("perfil")}
+              >
+                Perfil
+              </button>
+              <button
+                className={`px-3 py-2 ${
+                  rightTab === "arquivos"
+                    ? "border-b-2 border-blue-600 text-blue-700"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+                onClick={() => setRightTab("arquivos")}
+              >
+                Arquivos
+              </button>
+              <button
+                className={`px-3 py-2 ${
+                  rightTab === "favoritos"
+                    ? "border-b-2 border-blue-600 text-blue-700"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+                onClick={() => setRightTab("favoritos")}
+              >
+                Favoritos
+              </button>
+              {recording && !((text || "").trim() || attachments.length) && (
+                <span
+                  className="text-xs text-red-600 inline-flex items-center gap-1"
+                  aria-live="polite"
+                >
+                  <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
+                  {recTime > 0 ? `${recTime}s` : "REC"}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="p-4 space-y-4 overflow-auto flex-1">
-          {rightLoading ? (
-            <div className="text-sm text-slate-500">Carregando...</div>
-          ) : (
-            <>
-              {rightTab === "perfil" && (
-                <>
-                  {rightMode === "contact" ? (
-                    <>
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
-                          {contactProfile?.avatarUrl ? (
-                            <img
-                              src={absUrl(contactProfile.avatarUrl)}
-                              alt="avatar"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-slate-500 text-sm">
-                              Sem foto
-                            </span>
-                          )}
-                        </div>
-                        <div className="w-full">
-                          <div className="text-center font-semibold truncate">
-                            {contactProfile?.name || "Contato"}
-                          </div>
-                          <div className="mt-2 space-y-1 text-sm">
-                            {contactProfile?.email && (
-                              <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
-                                {contactProfile.email}
-                              </div>
-                            )}
-                            {contactProfile?.phone && (
-                              <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
-                                {contactProfile.phone}
-                              </div>
+          <div className="p-4 space-y-4 overflow-auto flex-1">
+            {rightLoading ? (
+              <div className="text-sm text-slate-500">Carregando...</div>
+            ) : (
+              <>
+                {rightTab === "perfil" && (
+                  <>
+                    {rightMode === "contact" ? (
+                      <>
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                            {contactProfile?.avatarUrl ? (
+                              <img
+                                src={absUrl(contactProfile.avatarUrl)}
+                                alt="avatar"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-slate-500 text-sm">
+                                Sem foto
+                              </span>
                             )}
                           </div>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex justify-center gap-2">
-                        {contactProfile?.phone && (
-                          <button
-                            type="button"
-                            className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
-                            onClick={() => {
-                              const params = new URLSearchParams();
-                              if (contactProfile.phone)
-                                params.set("to", contactProfile.phone);
-                              if (contactProfile.name)
-                                params.set("name", contactProfile.name);
-                              if (contactProfile.id)
-                                params.set("id", contactProfile.id);
-                              nav(`/telefonia?${params.toString()}`);
-                            }}
-                          >
-                            Ligar
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
-                          onClick={() => setRightTab("arquivos")}
-                        >
-                          Ver arquivos
-                        </button>
-                      </div>
-                      <div className="mt-5">
-                        <div className="font-semibold mb-2">
-                          Grupos em comum
-                        </div>
-                        {contactLoading ? (
-                          <div className="text-sm text-slate-500">
-                            Carregando...
-                          </div>
-                        ) : contactErr ? (
-                          <div className="text-sm text-red-600">
-                            {contactErr}
-                          </div>
-                        ) : contactGroups.filter(
-                            (g) => (g?.name || "").toUpperCase() !== "DM"
-                          ).length > 0 ? (
-                          <ul className="space-y-1">
-                            {contactGroups
-                              .filter(
-                                (g) =>
-                                  (g?.name || "").toUpperCase() !== "DM"
-                              )
-                              .map((g) => (
-                                <li key={g.id}>
-                                  <button
-                                    type="button"
-                                    className="w-full text-left px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
-                                    onClick={() => {
-                                      setActive({ id: g.id, name: g.name });
-                                      hideLeftIfMobile();
-                                    }}
-                                  >
-                                    {g.name}
-                                  </button>
-                                </li>
-                              ))}
-                          </ul>
-                        ) : (
-                          <div className="text-sm text-slate-500">
-                            Nenhum grupo em comum.
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : rightMode === "group" ? (
-                    <>
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
-                          {active?.avatarUrl ? (
-                            <img
-                              src={absUrl(active.avatarUrl)}
-                              alt="avatar"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-slate-500 text-sm">
-                              Grupo
-                            </span>
-                          )}
-                        </div>
-                        <div className="w-full">
-                          <div className="text-center font-semibold truncate">
-                            {active?.name || "Grupo"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-5">
-                        <div className="font-semibold mb-2">
-                          Participantes
-                        </div>
-                        {groupLoading ? (
-                          <div className="text-sm text-slate-500">
-                            Carregando...
-                          </div>
-                        ) : groupErr ? (
-                          <div className="text-sm text-red-600">
-                            {groupErr}
-                          </div>
-                        ) : groupMembers.length > 0 ? (
-                          <ul className="space-y-1">
-                            {groupMembers.map((m) => (
-                              <li
-                                key={m.id}
-                                className="flex items-center gap-2 px-2 py-1 rounded border border-slate-200"
-                              >
-                                <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                                  {m.user?.avatarUrl ? (
-                                    <img
-                                      src={absUrl(m.user.avatarUrl)}
-                                      alt={m.user?.name || "participante"}
-                                      className="w-full h-full object-cover"
-                                    />
-                                  ) : (
-                                    <span className="text-[10px] text-slate-500">
-                                      {(m.user?.name || "?")
-                                        .slice(0, 1)
-                                        .toUpperCase()}
-                                    </span>
-                                  )}
+                          <div className="w-full">
+                            <div className="text-center font-semibold truncate">
+                              {contactProfile?.name || "Contato"}
+                            </div>
+                            <div className="mt-2 space-y-1 text-sm">
+                              {contactProfile?.email && (
+                                <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                  {contactProfile.email}
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-sm truncate">
-                                    {m.user?.name || "Participante"}
-                                  </div>
-                                  {m.user?.email && (
-                                    <div className="text-[11px] text-slate-500 truncate">
-                                      {m.user.email}
-                                    </div>
-                                  )}
+                              )}
+                              {contactProfile?.phone && (
+                                <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                  {contactProfile.phone}
                                 </div>
-                                {m.role && (
-                                  <span className="text-[11px] text-slate-500 ml-2">
-                                    {m.role}
-                                  </span>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <div className="text-sm text-slate-500">
-                            Nenhum participante.
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-3">
-                        <div className="w-16 h-16 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
-                          {pfAvatar ? (
-                            <img
-                              src={URL.createObjectURL(pfAvatar)}
-                              alt="avatar"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : meProfile?.avatarUrl ? (
-                            <img
-                              src={absUrl(meProfile.avatarUrl)}
-                              alt="avatar"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-slate-500">Sem foto</span>
-                          )}
                         </div>
-                        <div className="flex flex-col">
-                          <label className="text-sm text-slate-600">
-                            Foto de perfil
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              id="pfAvatar"
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) =>
-                                setPfAvatar(e.target.files?.[0] || null)
-                              }
-                            />
+                        <div className="mt-3 flex justify-center gap-2">
+                          {contactProfile?.phone && (
                             <button
                               type="button"
-                              className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-                              onClick={() =>
-                                document.getElementById("pfAvatar")?.click()
-                              }
+                              className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                              onClick={() => {
+                                const params = new URLSearchParams();
+                                if (contactProfile.phone)
+                                  params.set("to", contactProfile.phone);
+                                if (contactProfile.name)
+                                  params.set("name", contactProfile.name);
+                                if (contactProfile.id)
+                                  params.set("id", contactProfile.id);
+                                nav(`/telefonia?${params.toString()}`);
+                              }}
                             >
-                              Alterar
+                              Ligar
                             </button>
-                            {pfAvatar && (
-                              <button
-                                type="button"
-                                className="px-2 py-1 rounded text-red-600 hover:bg-red-50"
-                                onClick={() => setPfAvatar(null)}
-                              >
-                                Remover
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-3">
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">
-                            Nome
-                          </label>
-                          <input
-                            value={pfName}
-                            onChange={(e) => setPfName(e.target.value)}
-                            className="w-full border rounded px-3 py-2"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">
-                            E-mail
-                          </label>
-                          <input
-                            value={meProfile?.email || ""}
-                            disabled
-                            className="w-full border rounded px-3 py-2 bg-slate-50 text-slate-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">
-                            Telefone
-                          </label>
-                          <input
-                            value={pfPhone}
-                            onChange={(e) => setPfPhone(e.target.value)}
-                            className="w-full border rounded px-3 py-2"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">
-                            Endereço
-                          </label>
-                          <input
-                            value={pfAddress}
-                            onChange={(e) => setPfAddress(e.target.value)}
-                            className="w-full border rounded px-3 py-2"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-slate-600 mb-1">
-                            Status
-                          </label>
-                          <input
-                            value={pfStatus}
-                            onChange={(e) => setPfStatus(e.target.value)}
-                            placeholder="Ex.: Disponível"
-                            className="w-full border rounded px-3 py-2"
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-                            onClick={saveProfile}
-                          >
-                            Salvar
-                          </button>
+                          )}
                           <button
                             type="button"
                             className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
-                            onClick={() => {
-                              setPfAvatar(null);
-                              hydrateProfileEditor(undefined, { force: true });
-                            }}
+                            onClick={() => setRightTab("arquivos")}
                           >
-                            Cancelar
+                            Ver arquivos
                           </button>
                         </div>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-200 space-y-2">
-                        <div className="font-medium text-sm">
-                          Alterar senha
+                        <div className="mt-5">
+                          <div className="font-semibold mb-2">
+                            Grupos em comum
+                          </div>
+                          {contactLoading ? (
+                            <div className="text-sm text-slate-500">
+                              Carregando...
+                            </div>
+                          ) : contactErr ? (
+                            <div className="text-sm text-red-600">
+                              {contactErr}
+                            </div>
+                          ) : contactGroups.filter(
+                              (g) => (g?.name || "").toUpperCase() !== "DM"
+                            ).length > 0 ? (
+                            <ul className="space-y-1">
+                              {contactGroups
+                                .filter(
+                                  (g) => (g?.name || "").toUpperCase() !== "DM"
+                                )
+                                .map((g) => (
+                                  <li key={g.id}>
+                                    <button
+                                      type="button"
+                                      className="w-full text-left px-2 py-1 rounded border border-slate-200 hover:bg-slate-50"
+                                      onClick={() => {
+                                        setActive({ id: g.id, name: g.name });
+                                        hideLeftIfMobile();
+                                      }}
+                                    >
+                                      {g.name}
+                                    </button>
+                                  </li>
+                                ))}
+                            </ul>
+                          ) : (
+                            <div className="text-sm text-slate-500">
+                              Nenhum grupo em comum.
+                            </div>
+                          )}
                         </div>
-                        <div className="grid grid-cols-1 gap-2">
-                          <input
-                            type="password"
-                            value={pwCurrent}
-                            onChange={(e) => setPwCurrent(e.target.value)}
-                            placeholder="Senha atual"
-                            className="w-full border rounded px-3 py-2"
-                          />
-                          <input
-                            type="password"
-                            value={pwNew}
-                            onChange={(e) => setPwNew(e.target.value)}
-                            placeholder="Nova senha"
-                            className="w-full border rounded px-3 py-2"
-                          />
+                      </>
+                    ) : rightMode === "group" ? (
+                      <>
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                            {active?.avatarUrl ? (
+                              <img
+                                src={absUrl(active.avatarUrl)}
+                                alt="avatar"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-slate-500 text-sm">
+                                Grupo
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-full">
+                            <div className="text-center font-semibold truncate">
+                              {active?.name || "Grupo"}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-5">
+                          <div className="font-semibold mb-2">
+                            Participantes
+                          </div>
+                          {groupLoading ? (
+                            <div className="text-sm text-slate-500">
+                              Carregando...
+                            </div>
+                          ) : groupErr ? (
+                            <div className="text-sm text-red-600">
+                              {groupErr}
+                            </div>
+                          ) : groupMembers.length > 0 ? (
+                            <ul className="space-y-1">
+                              {groupMembers.map((m) => (
+                                <li
+                                  key={m.id}
+                                  className="flex items-center gap-2 px-2 py-1 rounded border border-slate-200"
+                                >
+                                  <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                                    {m.user?.avatarUrl ? (
+                                      <img
+                                        src={absUrl(m.user.avatarUrl)}
+                                        alt={m.user?.name || "participante"}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <span className="text-[10px] text-slate-500">
+                                        {(m.user?.name || "?")
+                                          .slice(0, 1)
+                                          .toUpperCase()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm truncate">
+                                      {m.user?.name || "Participante"}
+                                    </div>
+                                    {m.user?.email && (
+                                      <div className="text-[11px] text-slate-500 truncate">
+                                        {m.user.email}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {m.role && (
+                                    <span className="text-[11px] text-slate-500 ml-2">
+                                      {m.role}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="text-sm text-slate-500">
+                              Nenhum participante.
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="w-16 h-16 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                            {pfAvatar ? (
+                              <img
+                                src={URL.createObjectURL(pfAvatar)}
+                                alt="avatar"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : meProfile?.avatarUrl ? (
+                              <img
+                                src={absUrl(meProfile.avatarUrl)}
+                                alt="avatar"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-slate-500">Sem foto</span>
+                            )}
+                          </div>
+                          <div className="flex flex-col">
+                            <label className="text-sm text-slate-600">
+                              Foto de perfil
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                id="pfAvatar"
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) =>
+                                  setPfAvatar(e.target.files?.[0] || null)
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                                onClick={() =>
+                                  document.getElementById("pfAvatar")?.click()
+                                }
+                              >
+                                Alterar
+                              </button>
+                              {pfAvatar && (
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 rounded text-red-600 hover:bg-red-50"
+                                  onClick={() => setPfAvatar(null)}
+                                >
+                                  Remover
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3">
+                          <div>
+                            <label className="block text-sm text-slate-600 mb-1">
+                              Nome
+                            </label>
+                            <input
+                              value={pfName}
+                              onChange={(e) => setPfName(e.target.value)}
+                              className="w-full border rounded px-3 py-2"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-600 mb-1">
+                              E-mail
+                            </label>
+                            <input
+                              value={meProfile?.email || ""}
+                              disabled
+                              className="w-full border rounded px-3 py-2 bg-slate-50 text-slate-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-600 mb-1">
+                              Telefone
+                            </label>
+                            <input
+                              value={pfPhone}
+                              onChange={(e) => setPfPhone(e.target.value)}
+                              className="w-full border rounded px-3 py-2"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-600 mb-1">
+                              Endereço
+                            </label>
+                            <input
+                              value={pfAddress}
+                              onChange={(e) => setPfAddress(e.target.value)}
+                              className="w-full border rounded px-3 py-2"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-slate-600 mb-1">
+                              Status
+                            </label>
+                            <input
+                              value={pfStatus}
+                              onChange={(e) => setPfStatus(e.target.value)}
+                              placeholder="Ex.: Disponível"
+                              className="w-full border rounded px-3 py-2"
+                            />
+                          </div>
                           <div className="flex gap-2">
                             <button
                               type="button"
-                              className="px-3 py-2 rounded bg-slate-800 text-white hover:bg-slate-900"
-                              onClick={changePassword}
+                              className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                              onClick={saveProfile}
                             >
-                              Atualizar senha
+                              Salvar
+                            </button>
+                            <button
+                              type="button"
+                              className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                              onClick={() => {
+                                setPfAvatar(null);
+                                hydrateProfileEditor(undefined, {
+                                  force: true,
+                                });
+                              }}
+                            >
+                              Cancelar
                             </button>
                           </div>
                         </div>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
 
-              {rightTab === "arquivos" && (
-                <div className="space-y-2">
-                  {messages
-                    .filter((m) => m.type !== "text" && !m.deletedAt)
-                    .map((m) => (
-                      <div
-                        key={m.id}
-                        className="flex items-center justify-between border rounded px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">
-                            {m.type === "image" || m.type === "gif"
-                              ? "Imagem"
-                              : m.type === "audio"
-                              ? "Áudio"
-                              : "Anexo"}
+                        <div className="pt-3 border-t border-slate-200 space-y-2">
+                          <div className="font-medium text-sm">
+                            Alterar senha
                           </div>
-                          <div className="text-slate-500 truncate max-w-[220px]">
-                            {m.type === "text"
-                              ? m.content
-                              : fileNameFromUrl(m.content) || m.content}
+                          <div className="grid grid-cols-1 gap-2">
+                            <input
+                              type="password"
+                              value={pwCurrent}
+                              onChange={(e) => setPwCurrent(e.target.value)}
+                              placeholder="Senha atual"
+                              className="w-full border rounded px-3 py-2"
+                            />
+                            <input
+                              type="password"
+                              value={pwNew}
+                              onChange={(e) => setPwNew(e.target.value)}
+                              placeholder="Nova senha"
+                              className="w-full border rounded px-3 py-2"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                className="px-3 py-2 rounded bg-slate-800 text-white hover:bg-slate-900"
+                                onClick={changePassword}
+                              >
+                                Atualizar senha
+                              </button>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-slate-500">
+                      </>
+                    )}
+                  </>
+                )}
+
+                {rightTab === "arquivos" && (
+                  <div className="space-y-2">
+                    {messages
+                      .filter((m) => m.type !== "text" && !m.deletedAt)
+                      .map((m) => (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between border rounded px-3 py-2 text-sm"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">
+                              {m.type === "image" || m.type === "gif"
+                                ? "Imagem"
+                                : m.type === "audio"
+                                ? "Áudio"
+                                : "Anexo"}
+                            </div>
+                            <div className="text-slate-500 truncate max-w-[220px]">
+                              {m.type === "text"
+                                ? m.content
+                                : fileNameFromUrl(m.content) || m.content}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[11px] text-slate-500">
+                              {new Date(m.createdAt).toLocaleDateString(
+                                "pt-BR"
+                              )}{" "}
+                              {new Date(m.createdAt).toLocaleTimeString(
+                                "pt-BR",
+                                {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                }
+                              )}
+                            </span>
+                            <a
+                              className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                              href={absUrl(m.content)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Abrir
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    {messages.filter((m) => m.type !== "text" && !m.deletedAt)
+                      .length === 0 && (
+                      <div className="text-sm text-slate-500">
+                        Nenhum arquivo nesta conversa.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {rightTab === "favoritos" && (
+                  <div className="space-y-2">
+                    {rightFavItems.map((m) => (
+                      <div
+                        key={m.id}
+                        className="border rounded px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium truncate">
+                            {m.author?.name || "Você"}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
                             {new Date(m.createdAt).toLocaleDateString("pt-BR")}{" "}
                             {new Date(m.createdAt).toLocaleTimeString("pt-BR", {
                               hour: "2-digit",
                               minute: "2-digit",
                             })}
-                          </span>
-                          <a
-                            className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-                            href={absUrl(m.content)}
-                            target="_blank"
-                            rel="noreferrer"
+                          </div>
+                        </div>
+                        <div className="mt-1">
+                          {m.type === "text"
+                            ? m.content
+                            : m.type === "image" || m.type === "gif"
+                            ? "Imagem"
+                            : m.type === "audio"
+                            ? "Áudio"
+                            : "Anexo"}
+                        </div>
+                        <div className="mt-1">
+                          <button
+                            className="text-[12px] text-red-600 hover:underline"
+                            onClick={() => toggleFav(m)}
                           >
-                            Abrir
-                          </a>
+                            Remover favorito
+                          </button>
                         </div>
                       </div>
                     ))}
-                  {messages.filter(
-                    (m) => m.type !== "text" && !m.deletedAt
-                  ).length === 0 && (
-                    <div className="text-sm text-slate-500">
-                      Nenhum arquivo nesta conversa.
-                    </div>
-                  )}
-                </div>
-              )}
+                    {rightFavItems.length === 0 && (
+                      <div className="text-sm text-slate-500">
+                        Nenhuma mensagem favoritada nesta conversa.
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              {rightTab === "favoritos" && (
-                <div className="space-y-2">
-                  {rightFavItems.map((m) => (
-                    <div
-                      key={m.id}
-                      className="border rounded px-3 py-2 text-sm"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium truncate">
-                          {m.author?.name || "Você"}
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          {new Date(m.createdAt).toLocaleDateString("pt-BR")}{" "}
-                          {new Date(m.createdAt).toLocaleTimeString("pt-BR", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </div>
-                      </div>
-                      <div className="mt-1">
-                        {m.type === "text"
-                          ? m.content
-                          : m.type === "image" || m.type === "gif"
-                          ? "Imagem"
-                          : m.type === "audio"
-                          ? "Áudio"
-                          : "Anexo"}
-                      </div>
-                      <div className="mt-1">
-                        <button
-                          className="text-[12px] text-red-600 hover:underline"
-                          onClick={() => toggleFav(m)}
-                        >
-                          Remover favorito
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {rightFavItems.length === 0 && (
-                    <div className="text-sm text-slate-500">
-                      Nenhuma mensagem favoritada nesta conversa.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {rightMsg && (
-                <div className="text-green-600 text-sm">{rightMsg}</div>
-              )}
-              {rightErr && (
-                <div className="text-red-600 text-sm">{rightErr}</div>
-              )}
-            </>
-          )}
-        </div>
+                {rightMsg && (
+                  <div className="text-green-600 text-sm">{rightMsg}</div>
+                )}
+                {rightErr && (
+                  <div className="text-red-600 text-sm">{rightErr}</div>
+                )}
+              </>
+            )}
+          </div>
         </aside>
       )}
     </div>
@@ -4017,7 +4360,7 @@ function MessageText({
         className="whitespace-pre-wrap break-words"
         style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
       >
-        {message.content}
+        {renderFormattedText(message.content || "")}
       </div>
       {message.editedAt && (
         <div className="text-[10px] opacity-70">(editado)</div>
@@ -4149,5 +4492,3 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     </span>
   );
 }
-
-
