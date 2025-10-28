@@ -1,0 +1,600 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useNavigate } from "react-router-dom";
+import { api, absUrl } from "../services/api.js";
+import {
+  IconSearch,
+  IconChevronLeft,
+  IconChevronRight,
+  IconX,
+  IconEllipsis,
+  IconEmoji,
+  IconStar,
+} from "../components/Icon.jsx";
+import { ioClient } from "../services/socket.js";
+import { getUser, getToken } from "../state/auth.js";
+import { ensurePushSubscription } from "../services/pushClient.js";
+import { EMOJI_CATS, EMOJI_TABS } from "../constants/emojiData.js";
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
+function renderFormattedText(text) {
+  if (!text) return null;
+  const parts = text.split(/(\*[^*\n]+\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <strong key={index}>{part.slice(1, -1)}</strong>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+}
+
+export default function Chat() {
+  // Lists and active conversation
+  const [groups, setGroups] = useState([]);
+  const [dms, setDms] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [active, setActive] = useState(null);
+
+  // Messages and composer
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState([]);
+  const [err, setErr] = useState("");
+  const [replyTo, setReplyTo] = useState(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [showGlobalDropHint, setShowGlobalDropHint] = useState(false);
+  const [forwardSource, setForwardSource] = useState(null);
+  const [forwardQuery, setForwardQuery] = useState("");
+  const [forwardingTo, setForwardingTo] = useState(false);
+  const [forwardError, setForwardError] = useState("");
+  const [forwardSuccess, setForwardSuccess] = useState("");
+  const closeForwardModal = useCallback(() => {
+    setForwardSource(null);
+  }, []);
+  // Audio recording
+  const [recording, setRecording] = useState(false);
+  const [recError, setRecError] = useState("");
+  const [recTime, setRecTime] = useState(0);
+
+  // UI state/refs
+  // Pinned/Muted groups (local only)
+  const [pinned, setPinned] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("chat_pins") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [muted, setMuted] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("chat_mutes") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [conversationOrder, setConversationOrder] = useState(() => {
+    try {
+      const raw = localStorage.getItem("chat_conversation_order");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const persistConversationOrder = useCallback((next) => {
+    try {
+      localStorage.setItem("chat_conversation_order", JSON.stringify(next));
+    } catch {}
+  }, []);
+  const bumpConversationOrder = useCallback(
+    (id) => {
+      if (!id) return;
+      setConversationOrder((prev) => {
+        const next = [id, ...prev.filter((x) => x !== id)];
+        persistConversationOrder(next);
+        return next;
+      });
+    },
+    [persistConversationOrder]
+  );
+  const ensureConversationOrder = useCallback(
+    (idsWithTimestamp = []) => {
+      if (!idsWithTimestamp.length) return;
+      setConversationOrder((prev) => {
+        const seen = new Set(prev);
+        const appended = [];
+        idsWithTimestamp
+          .filter((entry) => entry && entry.id)
+          .sort((a, b) => {
+            const ta = coerceTimestamp(a.ts);
+            const tb = coerceTimestamp(b.ts);
+            return tb - ta;
+          })
+          .forEach(({ id }) => {
+            if (!seen.has(id)) {
+              appended.push(id);
+              seen.add(id);
+            }
+          });
+        if (!appended.length) return prev;
+        const next = [...prev, ...appended];
+        persistConversationOrder(next);
+        return next;
+      });
+    },
+    [persistConversationOrder]
+  );
+  function togglePin(id) {
+    setPinned((prev) => {
+      const n = { ...(prev || {}) };
+      n[id] = !n[id];
+      try {
+        localStorage.setItem("chat_pins", JSON.stringify(n));
+      } catch {}
+      return n;
+    });
+  }
+  function toggleMute(id) {
+    setMuted((prev) => {
+      const n = { ...(prev || {}) };
+      n[id] = !n[id];
+      try {
+        localStorage.setItem("chat_mutes", JSON.stringify(n));
+      } catch {}
+      return n;
+    });
+  }
+  const [menuFor, setMenuFor] = useState(null);
+  const messageMenuContainerRef = useRef(null);
+  const setMessageMenuContainer = useCallback((node) => {
+    messageMenuContainerRef.current = node;
+  }, []);
+  const [highlightId, setHighlightId] = useState(null);
+  const highlightMessage = useCallback(
+    (id, duration = 2000) => {
+      if (!id) return;
+      setHighlightId(id);
+      if (highlightTimeoutRef.current) {
+        try {
+          clearTimeout(highlightTimeoutRef.current);
+        } catch {}
+      }
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightId((current) => (current === id ? null : current));
+        highlightTimeoutRef.current = null;
+      }, duration);
+    },
+    []
+  );
+  const scrollToMessage = useCallback(
+    (messageId) => {
+      if (!messageId || typeof document === "undefined") return false;
+      const el = document.getElementById(`msg-${messageId}`);
+      if (!el) return false;
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+      highlightMessage(messageId);
+      return true;
+    },
+    [highlightMessage]
+  );
+  const [editId, setEditId] = useState("");
+  const [editText, setEditText] = useState("");
+  const [convQuery, setConvQuery] = useState("");
+  const [showEmoji, setShowEmoji] = useState(false);
+  const emojiBtnRef = useRef(null);
+  // Posição inicial de fallback para o popover (caso cálculo ainda não tenha ocorrido)
+  const [emojiPos, setEmojiPos] = useState({
+    left: 4,
+    bottom: 120,
+    width: 360,
+    maxHeight: 416,
+  });
+  const dragCounterRef = useRef(0);
+  const dragActiveRef = useRef(false);
+const dropHandledRef = useRef(false);
+const dropZoneRef = useRef(null);
+const composerRef = useRef(null);
+const clearDragState = useCallback(() => {
+  dragCounterRef.current = 0;
+  dragActiveRef.current = false;
+  dropHandledRef.current = false;
+  setIsDraggingFile(false);
+  setShowGlobalDropHint(false);
+}, []);
+
+const keepOverlayAlive = useCallback(() => {
+  dragActiveRef.current = true;
+  setIsDraggingFile(true);
+  setShowGlobalDropHint(true);
+}, []);
+
+  const isInsideDropZone = useCallback((event) => {
+    const zone = dropZoneRef.current;
+    if (!zone) return false;
+    const nextTarget = event?.relatedTarget;
+    if (nextTarget && zone.contains(nextTarget)) return true;
+    const { clientX, clientY, target } = event || {};
+    if (typeof clientX !== "number" || typeof clientY !== "number") {
+      if (target && zone.contains(target)) return true;
+      return dragActiveRef.current;
+    }
+    const rect = zone.getBoundingClientRect();
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }, []);
+  function openEmojiPopover() {
+    try {
+      const btn = emojiBtnRef.current;
+      const formEl = composerRef.current;
+      const vw = typeof window !== "undefined" ? window.innerWidth : 800;
+      const vh = typeof window !== "undefined" ? window.innerHeight : 600;
+      const pad = 4;
+      const lift = 4; // distância extra acima do form (4px)
+      const popMax = Math.min(26 * 16, vh - pad * 2);
+      const getRect = (el) =>
+        el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      const rForm = getRect(formEl);
+      const rBtn = getRect(btn);
+      const source = rForm || rBtn;
+      if (source) {
+        const baseWidth = rForm
+          ? Math.min(420, Math.max(320, rForm.width || 420))
+          : Math.min(420, Math.max(320, vw * 0.95));
+        const desiredWidth = Math.min(baseWidth, vw - pad * 2);
+        const anchorLeft = rForm ? rForm.left : rBtn ? rBtn.left : pad;
+        const left = pad;
+        const anchorTop = rForm ? rForm.top : rBtn ? rBtn.top : vh / 2;
+        // bottom = distância da borda inferior do viewport até o topo do form + lift
+        const bottom = Math.max(pad, vh - anchorTop + lift);
+        setEmojiPos({ left, bottom, width: desiredWidth, maxHeight: popMax });
+      } else {
+        setEmojiPos({
+          left: pad,
+          bottom: 120,
+          width: Math.min(420, Math.max(320, vw * 0.95)),
+          maxHeight: popMax,
+        });
+      }
+    } catch {}
+    setShowEmoji(true);
+  }
+  // Sidebar context menu (right-click)
+  const [sideMenu, setSideMenu] = useState({
+    open: false,
+    type: null,
+    id: null,
+    groupId: null,
+    x: 0,
+    y: 0,
+  });
+  const sideMenuRef = useRef(null);
+  // Emoji list (clean, UTF-8 safe)
+  const EMOJIS = React.useMemo(() => {
+    try {
+      const keys = Object.keys(EMOJI_CATS).filter(
+        (k) => k !== "recent" && k !== "bandeiras"
+      );
+      const list = [];
+      keys.forEach((k) => {
+        (EMOJI_CATS[k] || []).forEach((e) => list.push(e));
+      });
+      const seen = new Set();
+      return list.filter((e) => {
+        if (seen.has(e)) return false;
+        seen.add(e);
+        return true;
+      });
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const [emojiTab, setEmojiTab] = useState("caras");
+  const [recentEmojis, setRecentEmojis] = useState(() => {
+    try {
+      const raw = localStorage.getItem("chat_recent_emojis");
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.slice(0, 24) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [emojiQuery, setEmojiQuery] = useState("");
+  const [favoriteEmojis, setFavoriteEmojis] = useState(() => {
+    try {
+      const raw = localStorage.getItem("chat_fav_emojis");
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.slice(0, 48) : [];
+    } catch {
+      return [];
+    }
+  });
+  function toggleFavEmoji(emo) {
+    try {
+      setFavoriteEmojis((prev) => {
+        const exists = (prev || []).includes(emo);
+        const next = exists
+          ? (prev || []).filter((e) => e !== emo)
+          : [emo, ...(prev || []).filter((e) => e !== emo)].slice(0, 48);
+        try {
+          localStorage.setItem("chat_fav_emojis", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    } catch {}
+  }
+
+  // Emoji scroll navigation like WhatsApp
+  const emojiScrollRef = useRef(null);
+  const emojiSectionRefs = useRef({});
+  const setEmojiSectionRef = (key) => (el) => {
+    if (el) emojiSectionRefs.current[key] = el;
+  };
+  useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) {
+        try {
+          clearTimeout(highlightTimeoutRef.current);
+        } catch {}
+        highlightTimeoutRef.current = null;
+      }
+    },
+    []
+  );
+
+  const emojiOrder = [
+    "recent",
+    "favoritos",
+    "caras",
+    "gestos",
+    "amor",
+    "natureza",
+    "clima",
+    "animais",
+    "comida",
+    "objetos",
+    "transportes",
+  ];
+  function scrollToEmojiTab(key) {
+    setEmojiTab(key);
+    try {
+      const cont = emojiScrollRef.current;
+      const el = emojiSectionRefs.current[key];
+      if (cont && el) {
+        cont.scrollTo({ top: el.offsetTop - 24, behavior: "smooth" });
+      }
+    } catch {}
+  }
+  useEffect(() => {
+    if (!showEmoji) return;
+    if (false) return; // don't auto-update tab during search
+    const cont = emojiScrollRef.current;
+    if (!cont) return;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        try {
+          let current = emojiTab;
+          for (const key of emojiOrder) {
+            const el = emojiSectionRefs.current[key];
+            if (!el) continue;
+            const relTop = el.offsetTop - cont.scrollTop;
+            if (relTop <= 32) current = key;
+          }
+          if (current && current !== emojiTab) setEmojiTab(current);
+        } finally {
+          ticking = false;
+        }
+      });
+    };
+    cont.addEventListener("scroll", onScroll, { passive: true });
+    return () => cont.removeEventListener("scroll", onScroll);
+  }, [showEmoji, emojiQuery, emojiTab]);
+  const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const listRef = useRef(null);
+  const bottomRef = useRef(null);
+  const mediaRecRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const recTimerRef = useRef(null);
+  const user = getUser();
+  const nav = useNavigate();
+  const [recPendingFile, setRecPendingFile] = useState(null);
+  const [recPreviewUrl, setRecPreviewUrl] = useState("");
+  const recAudioRef = useRef(null);
+  const recStartedAtRef = useRef(null);
+  const highlightTimeoutRef = useRef(null);
+  const [recPreviewDuration, setRecPreviewDuration] = useState("");
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const attachmentsRef = useRef([]);
+
+  // Conversation menu (header)
+  const [convMenuOpen, setConvMenuOpen] = useState(false);
+  const convMenuRef = useRef(null);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach((item) => {
+        if (item?.preview) {
+          try {
+            URL.revokeObjectURL(item.preview);
+          } catch {}
+        }
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!forwardSource) {
+      setForwardQuery("");
+      setForwardError("");
+      setForwardSuccess("");
+      setForwardingTo(false);
+      return;
+    }
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setForwardSource(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [forwardSource]);
+
+  function createAttachment(file) {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      preview: file?.type?.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null,
+    };
+  }
+
+  function fileKey(file) {
+    if (!file) return "";
+    const { name = "", size = 0, lastModified = 0, type = "" } = file;
+    return `${name}::${size}::${lastModified || 0}::${type}`;
+  }
+
+  function addAttachments(newFiles = []) {
+    if (!newFiles.length) return;
+    setAttachments((prev = []) => {
+      const existing = new Set(
+        prev
+          .map((item) => (item?.file ? fileKey(item.file) : item?.id))
+          .filter(Boolean)
+      );
+      const additions = [];
+      for (const file of newFiles) {
+        if (!file) continue;
+        const key = fileKey(file);
+        if (existing.has(key)) continue;
+        existing.add(key);
+        additions.push(createAttachment(file));
+      }
+      if (!additions.length) return prev;
+      return [...prev, ...additions];
+    });
+  }
+
+  function removeAttachment(id) {
+    setAttachments((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.preview) {
+        try {
+          URL.revokeObjectURL(target.preview);
+        } catch {}
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  }
+
+  function clearAttachments() {
+    attachmentsRef.current.forEach((item) => {
+      if (item?.preview) {
+        try {
+          URL.revokeObjectURL(item.preview);
+        } catch {}
+      }
+    });
+    setAttachments([]);
+    try {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {}
+  }
+
+  useEffect(() => {
+    const targets = [dropZoneRef.current].filter(Boolean);
+    if (!targets.length) return;
+
+    const hasFiles = (event) => {
+      try {
+        return Array.from(event?.dataTransfer?.types || []).includes("Files");
+      } catch {
+        return false;
+      }
+    };
+    const resetDrag = clearDragState;
+    const isInsideZone = (event) => {
+      const rect = dropZoneRef.current?.getBoundingClientRect();
+      if (!rect) return false;
+      const { clientX, clientY } = event || {};
+      if (typeof clientX !== "number" || typeof clientY !== "number") return false;
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    };
+    const onDragEnter = (event) => {
+      if (!hasFiles(event) || !isInsideZone(event)) return;
+      event.preventDefault();
+      dragCounterRef.current += 1;
+      keepOverlayAlive();
+    };
+    const onDragOver = (event) => {
+      if (!hasFiles(event) || !isInsideZone(event)) return;
+      event.preventDefault();
+      try {
+        event.dataTransfer.dropEffect = "copy";
+      } catch {}
+      keepOverlayAlive();
+    };
+    const onDragLeave = (event) => {
+      if (!hasFiles(event)) return;
+      if (isInsideZone(event)) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+      if (dragCounterRef.current === 0) {
+        clearDragState();
+      }
+    };
+    const onDrop = (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (typeof event.stopPropagation === "function") event.stopPropagation();
+      if (dropHandledRef.current) {
+        return;
+      }
+      dropHandledRef.current = true;
+      const files = Array.from(event?.dataTransfer?.files || []);
+      if (files.length) addAttachments(files);
+      resetDrag();
+      setTimeout(() => {
+        dropHandledRef.current = false;
+      }, 0);

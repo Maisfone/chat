@@ -55,8 +55,17 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [err, setErr] = useState("");
   const [replyTo, setReplyTo] = useState(null);
+  const [forwardSource, setForwardSource] = useState(null);
+  const [forwardQuery, setForwardQuery] = useState("");
+  const [forwardingTo, setForwardingTo] = useState(false);
+  const [forwardError, setForwardError] = useState("");
+  const [forwardSuccess, setForwardSuccess] = useState("");
+  const closeForwardModal = useCallback(() => {
+    setForwardSource(null);
+  }, []);
   // Audio recording
   const [recording, setRecording] = useState(false);
   const [recError, setRecError] = useState("");
@@ -385,6 +394,7 @@ export default function Chat() {
   const [recPreviewDuration, setRecPreviewDuration] = useState("");
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
+  const dragCounterRef = useRef(0);
 
   // Conversation menu (header)
   const [convMenuOpen, setConvMenuOpen] = useState(false);
@@ -406,6 +416,30 @@ export default function Chat() {
     };
   }, []);
 
+  useEffect(() => {
+    dragCounterRef.current = 0;
+    setIsDraggingFiles(false);
+  }, [active]);
+
+  useEffect(() => {
+    if (!forwardSource) {
+      setForwardQuery("");
+      setForwardError("");
+      setForwardSuccess("");
+      setForwardingTo(false);
+      return;
+    }
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setForwardSource(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [forwardSource]);
+
   function createAttachment(file) {
     return {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -416,10 +450,31 @@ export default function Chat() {
     };
   }
 
+  function fileKey(file) {
+    if (!file) return "";
+    const { name = "", size = 0, lastModified = 0, type = "" } = file;
+    return `${name}::${size}::${lastModified || 0}::${type}`;
+  }
+
   function addAttachments(newFiles = []) {
     if (!newFiles.length) return;
-    const mapped = newFiles.map((f) => createAttachment(f));
-    setAttachments((prev) => [...prev, ...mapped]);
+    setAttachments((prev = []) => {
+      const existing = new Set(
+        prev
+          .map((item) => (item?.file ? fileKey(item.file) : item?.id))
+          .filter(Boolean)
+      );
+      const additions = [];
+      for (const file of newFiles) {
+        if (!file) continue;
+        const key = fileKey(file);
+        if (existing.has(key)) continue;
+        existing.add(key);
+        additions.push(createAttachment(file));
+      }
+      if (!additions.length) return prev;
+      return [...prev, ...additions];
+    });
   }
 
   function removeAttachment(id) {
@@ -445,6 +500,82 @@ export default function Chat() {
     setAttachments([]);
     try {
       if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {}
+  }
+
+  function eventContainsFiles(event) {
+    const dt = event?.dataTransfer;
+    if (!dt) return false;
+    if (dt.types) {
+      if (typeof dt.types.contains === "function" && dt.types.contains("Files"))
+        return true;
+      try {
+        if (Array.from(dt.types).includes("Files")) return true;
+      } catch {}
+    }
+    if (dt.items && dt.items.length) {
+      for (let i = 0; i < dt.items.length; i++) {
+        if (dt.items[i]?.kind === "file") return true;
+      }
+    }
+    return Boolean(dt.files && dt.files.length);
+  }
+
+  function handleDragEnter(event) {
+    if (!eventContainsFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!active) return;
+    if (
+      event.currentTarget &&
+      event.relatedTarget &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    dragCounterRef.current += 1;
+    if (!isDraggingFiles) setIsDraggingFiles(true);
+  }
+
+  function handleDragLeave(event) {
+    if (!active || !isDraggingFiles) return;
+    if (
+      event.currentTarget &&
+      event.relatedTarget &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) {
+      setIsDraggingFiles(false);
+    }
+  }
+
+  function handleDragOver(event) {
+    if (!active) return;
+    if (!eventContainsFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      event.dataTransfer.dropEffect = active ? "copy" : "none";
+    } catch {}
+    if (!active) return;
+  }
+
+  function handleDrop(event) {
+    if (!eventContainsFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingFiles(false);
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!active || !files.length) return;
+    addAttachments(files);
+    try {
+      inputRef.current?.focus();
     } catch {}
   }
 
@@ -661,8 +792,13 @@ export default function Chat() {
     };
   }, [notifSupported]);
 
-  function previewFromMessage(msg) {
+  function previewFromMessage(msg, { skipForward = false } = {}) {
     if (!msg) return "";
+    if (!skipForward && msg.forwardedFrom) {
+      if (msg.type === "text" && msg.content) return msg.content || "";
+      const inner = previewFromMessage(msg.forwardedFrom, { skipForward: true });
+      return inner ? `Encaminhada: ${inner}` : "Encaminhada";
+    }
     if (msg.type === "text") return msg.content || "";
     if (msg.type === "image" || msg.type === "gif") return "Imagem";
     if (msg.type === "audio") return "Áudio";
@@ -1173,6 +1309,51 @@ export default function Chat() {
     return m ? m.author?.id || m.authorId : null;
   }, [dmOtherId, messages, user?.id]);
 
+  const forwardGroupTargets = useMemo(() => {
+    return toArray(groups).map((g) => ({
+      kind: "conversation",
+      groupId: g.id,
+      label: g.name || "Grupo",
+      subtitle: g.description || "",
+      avatarUrl: g.avatarUrl || "",
+      sourceLabel: "Grupo",
+    }));
+  }, [groups]);
+
+  const forwardDmTargets = useMemo(() => {
+    return toArray(dms).map((dm) => ({
+      kind: "conversation",
+      groupId: dm.groupId,
+      label: dm.other?.name || "Direto",
+      subtitle: dm.other?.email || dm.other?.phone || "",
+      avatarUrl: dm.other?.avatarUrl || "",
+      sourceLabel: "Direto",
+    }));
+  }, [dms]);
+
+  const forwardPeopleTargets = useMemo(() => {
+    return toArray(people)
+      .filter((p) => p && p.id && p.id !== user?.id)
+      .map((p) => {
+        const existingDm = toArray(dms).find(
+          (dm) => dm?.other?.id === p.id
+        );
+        return {
+          kind: "person",
+          userId: p.id,
+          label: p.name || p.email || "Contato",
+          subtitle: p.email || p.phone || "",
+          avatarUrl: p.avatarUrl || "",
+          existingGroupId: existingDm?.groupId || null,
+        };
+      });
+  }, [people, dms, user?.id]);
+
+  const forwardConversationOptions = useMemo(
+    () => [...forwardGroupTargets, ...forwardDmTargets],
+    [forwardGroupTargets, forwardDmTargets]
+  );
+
   // Load lists (groups, DMs, people)
   useEffect(() => {
     (async () => {
@@ -1448,6 +1629,113 @@ export default function Chat() {
       } catch {}
     })();
   }, [dms, ensureConversationOrder]);
+
+  async function ensureDmGroup(otherId) {
+    if (!otherId) throw new Error("Usuário inválido");
+    try {
+      const dm = await api.get(`/dm/with/${otherId}`);
+      if (dm?.groupId) {
+        setDms((prev) =>
+          (prev || []).map((item) =>
+            item.groupId === dm.groupId
+              ? { ...item, other: dm.other || item.other }
+              : item
+          )
+        );
+        return dm.groupId;
+      }
+    } catch {}
+    try {
+      const dm = await api.post(`/dm/${otherId}`);
+      if (dm?.groupId) {
+        setDms((prev) => {
+          const list = prev || [];
+          const existing = list.find((x) => x.groupId === dm.groupId);
+          const preservedLast = existing?._lastAt;
+          const preservedUnread = existing?._unread || 0;
+          if (existing) {
+            return list.map((item) =>
+              item.groupId === dm.groupId
+                ? {
+                    ...item,
+                    other: dm.other || item.other,
+                    _unread: preservedUnread,
+                    _lastAt: preservedLast,
+                  }
+                : item
+            );
+          }
+          return [
+            ...list,
+            {
+              id: dm.groupId,
+              groupId: dm.groupId,
+              other: dm.other,
+              _unread: preservedUnread,
+              _lastAt: preservedLast,
+            },
+          ];
+        });
+        ensureConversationOrder([
+          {
+            id: dm.groupId,
+            ts: Date.now(),
+          },
+        ]);
+        return dm.groupId;
+      }
+    } catch (e) {
+      throw new Error(e?.message || "Não foi possível iniciar a conversa");
+    }
+    throw new Error("Não foi possível iniciar a conversa");
+  }
+
+  async function forwardMessageToTarget(target) {
+    if (!target || !forwardSource) return;
+    setForwardError("");
+    setForwardSuccess("");
+    setForwardingTo(true);
+    try {
+      let targetGroupId = null;
+      if (target.kind === "conversation") {
+        targetGroupId = target.groupId;
+      } else if (target.kind === "person") {
+        targetGroupId =
+          target.existingGroupId || (await ensureDmGroup(target.userId));
+      }
+      if (!targetGroupId) {
+        throw new Error("Destino inválido");
+      }
+      const forwarded = await api.post(
+        `/messages/${forwardSource.id}/forward`,
+        { targetGroupId }
+      );
+      updateConversationActivity(forwarded, { mine: true });
+      if (active?.id === targetGroupId) {
+        setMessages((prev) => {
+          const list = prev || [];
+          if (list.some((x) => x.id === forwarded.id)) return list;
+          return [...list, forwarded];
+        });
+        try {
+          requestAnimationFrame(() => {
+            bottomRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "end",
+            });
+          });
+        } catch {}
+      }
+      setForwardSuccess("Mensagem encaminhada!");
+      setTimeout(() => {
+        closeForwardModal();
+      }, 600);
+    } catch (e) {
+      setForwardError(e?.message || "Falha ao encaminhar mensagem");
+    } finally {
+      setForwardingTo(false);
+    }
+  }
 
   // Open DM with a person, creating if needed
   async function startConversation(otherId) {
@@ -2438,6 +2726,30 @@ export default function Chat() {
     })();
   }, [groups, ensureConversationOrder]);
 
+  const forwardSearch = (forwardQuery || "").trim().toLowerCase();
+  const filteredForwardConversations = forwardConversationOptions.filter(
+    (item) => {
+      if (!forwardSearch) return true;
+      const label = (item.label || "").toLowerCase();
+      const subtitle = (item.subtitle || "").toLowerCase();
+      return (
+        label.includes(forwardSearch) || subtitle.includes(forwardSearch)
+      );
+    }
+  );
+  const filteredForwardPeople = forwardPeopleTargets.filter((item) => {
+    if (!forwardSearch) return true;
+    const label = (item.label || "").toLowerCase();
+    const subtitle = (item.subtitle || "").toLowerCase();
+    return label.includes(forwardSearch) || subtitle.includes(forwardSearch);
+  });
+  const forwardSummary = forwardSource
+    ? previewFromMessage(forwardSource, { skipForward: true }) || ""
+    : "";
+  const composerHasText = (text || "").trim().length > 0;
+  const composerHasAttachments = attachments.length > 0;
+  const canSendMessage = composerHasText || composerHasAttachments;
+
   return (
     <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
       {pushError && (
@@ -2775,7 +3087,35 @@ export default function Chat() {
         </div>
       )}
       {/* Conversation area */}
-      <div className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60">
+      <div
+        className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60"
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {isDraggingFiles && (
+          <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-blue-500 bg-blue-100/70 text-blue-700 dark:border-blue-400 dark:bg-blue-900/30 dark:text-blue-200">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-12 w-12"
+            >
+              <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
+            </svg>
+            <div className="text-sm font-semibold">
+              Solte os arquivos aqui para anexar
+            </div>
+            <div className="text-xs">
+              ou clique no ícone de anexo abaixo
+            </div>
+          </div>
+        )}
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           {!isDesktop && (
             <button
@@ -2985,6 +3325,21 @@ export default function Chat() {
                         {m.author?.name || "Contato"}
                       </div>
                     )}
+                    {m.forwardedFrom && (
+                      <div className="mb-1 w-full rounded-sm border-l-4 border-amber-400 bg-amber-50/80 px-2 py-1 text-xs text-slate-600 dark:border-amber-500 dark:bg-slate-800/70 dark:text-slate-200">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-300">
+                          Encaminhada
+                        </div>
+                        <div className="font-medium">
+                          {m.forwardedFrom.author?.name || "Mensagem"}
+                        </div>
+                        <div className="truncate opacity-90">
+                          {previewFromMessage(m.forwardedFrom, {
+                            skipForward: true,
+                          }) || "Mensagem"}
+                        </div>
+                      </div>
+                    )}
                     {m.replyTo && (
                       <button
                         type="button"
@@ -3161,6 +3516,20 @@ export default function Chat() {
                         >
                           Responder
                         </button>
+                        {!m.deletedAt && (
+                          <button
+                            className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                            onClick={() => {
+                              setMenuFor(null);
+                              setForwardSource(m);
+                              setForwardError("");
+                              setForwardSuccess("");
+                              setForwardQuery("");
+                            }}
+                          >
+                            Encaminhar
+                          </button>
+                        )}
                         {(m.author?.id || m.authorId) === user?.id &&
                           m.type === "text" &&
                           !m.deletedAt && (
@@ -3238,7 +3607,7 @@ export default function Chat() {
             >
               Cancelar
             </button>
-            {recording && !((text || "").trim() || attachments.length) && (
+            {recording && !canSendMessage && (
               <span
                 className="text-xs text-red-600 inline-flex items-center gap-1"
                 aria-live="polite"
@@ -3501,7 +3870,7 @@ export default function Chat() {
             <button
               type="button"
               onClick={() => {
-                if ((text || "").trim() || attachments.length) {
+                if (canSendMessage) {
                   if (!sending) sendMessage();
                 } else {
                   recording ? stopRecording() : startRecording();
@@ -3510,20 +3879,20 @@ export default function Chat() {
               className={`${
                 sending
                   ? "bg-blue-400 text-white cursor-wait"
-                  : (text || "").trim() || attachments.length
+                  : canSendMessage
                   ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
                   : recording
                   ? "bg-red-600 text-white hover:bg-red-700 shadow"
                   : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
               } inline-flex items-center justify-center rounded-full h-10 flex-shrink-0 transition ${
-                recording && !((text || "").trim() || attachments.length)
+                recording && !canSendMessage
                   ? "px-4 gap-2"
                   : "w-10"
               }`}
               title={
                 sending
                   ? "Enviando..."
-                  : (text || "").trim() || attachments.length
+                  : canSendMessage
                   ? "Enviar"
                   : recording
                   ? "Parar gravação"
@@ -3531,7 +3900,7 @@ export default function Chat() {
               }
               disabled={sending}
             >
-              {(text || "").trim() || attachments.length ? (
+              {canSendMessage ? (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -3560,7 +3929,7 @@ export default function Chat() {
                 </svg>
               )}
             </button>
-            {recording && !((text || "").trim() || attachments.length) && (
+            {recording && !canSendMessage && (
               <span
                 className="text-xs text-red-600 inline-flex items-center gap-1"
                 aria-live="polite"
@@ -3570,10 +3939,10 @@ export default function Chat() {
               </span>
             )}
           </div>
-          {((text || "").trim() || attachments.length) && err && (
+          {canSendMessage && err && (
             <div className="text-sm text-red-600">{err}</div>
           )}
-          {!(text || "").trim() && !attachments.length && recError && (
+          {!composerHasText && !composerHasAttachments && recError && (
             <div className="text-sm text-red-600">{recError}</div>
           )}
 
@@ -3788,7 +4157,7 @@ export default function Chat() {
             >
               ×
             </button>
-            {recording && !((text || "").trim() || attachments.length) && (
+            {recording && !canSendMessage && (
               <span
                 className="text-xs text-red-600 inline-flex items-center gap-1"
                 aria-live="polite"
@@ -3830,7 +4199,7 @@ export default function Chat() {
               >
                 Favoritos
               </button>
-              {recording && !((text || "").trim() || attachments.length) && (
+              {recording && !canSendMessage && (
                 <span
                   className="text-xs text-red-600 inline-flex items-center gap-1"
                   aria-live="polite"
@@ -4311,6 +4680,179 @@ export default function Chat() {
           </div>
         </aside>
       )}
+      {forwardSource && (
+        <>
+          <button
+            type="button"
+            aria-label="Fechar encaminhamento"
+            className={`fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm ${
+              forwardingTo ? "cursor-wait" : ""
+            }`}
+            onClick={() => {
+              if (!forwardingTo) closeForwardModal();
+            }}
+            disabled={forwardingTo}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+            <div className="relative w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+                    Encaminhar mensagem
+                  </h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-300">
+                    Escolha uma conversa ou contato para encaminhar.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className={`rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 ${
+                    forwardingTo ? "opacity-60 cursor-not-allowed" : ""
+                  }`}
+                  onClick={() => {
+                    if (!forwardingTo) closeForwardModal();
+                  }}
+                  aria-label="Fechar"
+                  disabled={forwardingTo}
+                >
+                  <IconX className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="mt-3 rounded border-l-4 border-blue-500 bg-blue-50/70 px-3 py-2 text-sm text-slate-700 dark:border-blue-400 dark:bg-slate-800/70 dark:text-slate-100">
+                <div className="text-xs uppercase tracking-wide text-blue-600 dark:text-blue-300">
+                  Mensagem selecionada
+                </div>
+                <div className="mt-1 font-medium">
+                  {forwardSource.author?.name || "Você"}
+                </div>
+                <div className="truncate opacity-80">
+                  {forwardSummary || "Mensagem"}
+                </div>
+              </div>
+              <div className="mt-4">
+                <input
+                  value={forwardQuery}
+                  onChange={(e) => setForwardQuery(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-blue-400 dark:focus:ring-blue-500/40"
+                  placeholder="Buscar conversa ou contato..."
+                />
+              </div>
+              {forwardError && (
+                <div className="mt-3 text-sm text-red-600">{forwardError}</div>
+              )}
+              {forwardSuccess && (
+                <div className="mt-3 text-sm text-green-600">
+                  {forwardSuccess}
+                </div>
+              )}
+              <div className="mt-4 max-h-72 space-y-4 overflow-y-auto pr-1">
+                {filteredForwardConversations.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Conversas
+                    </div>
+                    <div className="space-y-2">
+                      {filteredForwardConversations.map((item) => (
+                        <button
+                          key={`conv-${item.groupId}`}
+                          type="button"
+                          disabled={forwardingTo}
+                          onClick={() => forwardMessageToTarget(item)}
+                          className={`flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:hover:bg-slate-800/70 ${
+                            forwardingTo ? "opacity-60" : ""
+                          }`}
+                        >
+                          <Avatar
+                            url={item.avatarUrl}
+                            name={item.label}
+                            size={40}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate text-slate-800 dark:text-slate-100">
+                              {item.label}
+                            </div>
+                            {item.subtitle && (
+                              <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                {item.subtitle}
+                              </div>
+                            )}
+                            <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                              {item.sourceLabel}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {filteredForwardPeople.length > 0 && (
+                  <div>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Contatos
+                    </div>
+                    <div className="space-y-2">
+                      {filteredForwardPeople.map((item) => (
+                        <button
+                          key={`person-${item.userId}`}
+                          type="button"
+                          disabled={forwardingTo}
+                          onClick={() => forwardMessageToTarget(item)}
+                          className={`flex w-full items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:hover:bg-slate-800/70 ${
+                            forwardingTo ? "opacity-60" : ""
+                          }`}
+                        >
+                          <Avatar
+                            url={item.avatarUrl}
+                            name={item.label}
+                            size={40}
+                            showStatus={false}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate text-slate-800 dark:text-slate-100">
+                              {item.label}
+                            </div>
+                            {item.subtitle && (
+                              <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                {item.subtitle}
+                              </div>
+                            )}
+                            <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                              Contato
+                              {item.existingGroupId ? " • DM existente" : ""}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {filteredForwardConversations.length === 0 &&
+                  filteredForwardPeople.length === 0 && (
+                    <div className="text-sm text-slate-500 dark:text-slate-300">
+                      Nenhum destino encontrado.
+                    </div>
+                  )}
+              </div>
+              {forwardingTo && (
+                <div className="mt-3 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-300">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                  Encaminhando...
+                </div>
+              )}
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                  onClick={closeForwardModal}
+                  disabled={forwardingTo}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -4492,3 +5034,10 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     </span>
   );
 }
+
+
+
+
+
+
+

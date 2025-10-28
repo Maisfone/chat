@@ -94,6 +94,11 @@ model Message {
   replyToId  String?     @map("reply_to_id")
   replies    Message[]   @relation("MessageReply")
 
+  // Encaminhamento
+  forwardedFrom   Message?  @relation("MessageForward", fields: [forwardedFromId], references: [id])
+  forwardedFromId String?   @map("forwarded_from_id")
+  forwardedCopies Message[] @relation("MessageForward")
+
   // Campo inverso para MessageFavorite
   favorites  MessageFavorite[]
 

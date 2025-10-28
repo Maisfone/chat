@@ -22,7 +22,15 @@ router.get('/favorites', async (req, res) => {
         message: {
           select: {
             id: true, groupId: true, type: true, content: true, createdAt: true,
-            author: { select: { id: true, name: true, avatarUrl: true } }
+            author: { select: { id: true, name: true, avatarUrl: true } },
+            forwardedFrom: {
+              select: {
+                id: true,
+                type: true,
+                content: true,
+                author: { select: { id: true, name: true, avatarUrl: true } }
+              }
+            }
           }
         }
       }
@@ -54,6 +62,14 @@ router.get('/:groupId', async (req, res) => {
           author: { select: { id: true, name: true } }
         }
       },
+      forwardedFrom: {
+        select: {
+          id: true,
+          type: true,
+          content: true,
+          author: { select: { id: true, name: true, avatarUrl: true } }
+        }
+      },
       _count: { select: { replies: true } },
       reads: { select: { userId: true } }
     }
@@ -78,7 +94,15 @@ router.post('/:groupId', async (req, res) => {
       data: { groupId, authorId: req.user.id, type, content, replyToId: replyToId || null },
       include: {
         author: { select: { id: true, name: true, avatarUrl: true } },
-        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+        forwardedFrom: {
+          select: {
+            id: true,
+            type: true,
+            content: true,
+            author: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
       }
     })
     req.io.to(groupId).emit('message:new', msg)
@@ -91,6 +115,91 @@ router.post('/:groupId', async (req, res) => {
     res.status(201).json(msg)
   } catch (e) {
     res.status(400).json({ error: 'Dados inválidos' })
+  }
+})
+
+// Encaminhar mensagem para outro grupo/conversa
+router.post('/:messageId/forward', async (req, res) => {
+  const { messageId } = req.params
+  const schema = z.object({
+    targetGroupId: z.string().uuid()
+  })
+  try {
+    const { targetGroupId } = schema.parse(req.body || {})
+    const original = await prisma.message.findUnique({
+      where: { id: messageId },
+      include: {
+        author: { select: { id: true, name: true, avatarUrl: true } }
+      }
+    })
+    if (!original || original.deletedAt) {
+      return res.status(404).json({ error: 'Mensagem não encontrada' })
+    }
+    const canViewSource = await prisma.groupMember.findFirst({
+      where: { groupId: original.groupId, userId: req.user.id }
+    })
+    if (!canViewSource) {
+      return res.status(403).json({ error: 'Sem acesso à mensagem original' })
+    }
+    const canSendTarget = await prisma.groupMember.findFirst({
+      where: { groupId: targetGroupId, userId: req.user.id }
+    })
+    if (!canSendTarget) {
+      return res.status(403).json({ error: 'Sem acesso ao destino' })
+    }
+    const forwarded = await prisma.message.create({
+      data: {
+        groupId: targetGroupId,
+        authorId: req.user.id,
+        type: original.type,
+        content: original.content,
+        forwardedFromId: original.id
+      },
+      include: {
+        author: { select: { id: true, name: true, avatarUrl: true } },
+        replyTo: {
+          select: {
+            id: true,
+            type: true,
+            content: true,
+            author: { select: { id: true, name: true } }
+          }
+        },
+        forwardedFrom: {
+          select: {
+            id: true,
+            type: true,
+            content: true,
+            author: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
+      }
+    })
+    req.io.to(targetGroupId).emit('message:new', forwarded)
+    try {
+      const members = await prisma.groupMember.findMany({
+        where: { groupId: targetGroupId },
+        select: { userId: true }
+      })
+      const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
+      const preview =
+        forwarded.type === 'text'
+          ? forwarded.content
+          : forwarded.type === 'image'
+          ? 'Imagem'
+          : forwarded.type === 'audio'
+          ? 'Áudio'
+          : 'Anexo'
+      await sendToUsers(targets, {
+        title: forwarded.author?.name || 'Mensagem',
+        body: forwarded.forwardedFrom ? `Encaminhada: ${preview}` : preview,
+        tag: `group:${targetGroupId}`,
+        data: { groupId: targetGroupId }
+      })
+    } catch {}
+    res.status(201).json(forwarded)
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao encaminhar mensagem' })
   }
 })
 
@@ -119,7 +228,15 @@ router.post('/:groupId/upload', upload, async (req, res) => {
     data: { groupId, authorId: req.user.id, type: storedType, content: contentUrl, replyToId },
     include: {
       author: { select: { id: true, name: true, avatarUrl: true } },
-      replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+      replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+      forwardedFrom: {
+        select: {
+          id: true,
+          type: true,
+          content: true,
+          author: { select: { id: true, name: true, avatarUrl: true } }
+        }
+      }
     }
   })
   req.io.to(groupId).emit('message:new', msg)
@@ -167,7 +284,15 @@ router.patch('/:messageId', async (req, res) => {
       data: { content, editedAt: new Date() },
       include: {
         author: { select: { id: true, name: true, avatarUrl: true } },
-        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+        forwardedFrom: {
+          select: {
+            id: true,
+            type: true,
+            content: true,
+            author: { select: { id: true, name: true, avatarUrl: true } }
+          }
+        }
       }
     })
     try { req.io.to(updated.groupId).emit('message:updated', updated) } catch {}
@@ -235,7 +360,15 @@ router.get('/favorites', async (req, res) => {
         message: {
           select: {
             id: true, groupId: true, type: true, content: true, createdAt: true,
-            author: { select: { id: true, name: true, avatarUrl: true } }
+            author: { select: { id: true, name: true, avatarUrl: true } },
+            forwardedFrom: {
+              select: {
+                id: true,
+                type: true,
+                content: true,
+                author: { select: { id: true, name: true, avatarUrl: true } }
+              }
+            }
           }
         }
       }
