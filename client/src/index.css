@@ -43,6 +43,8 @@ body,
 body.dark {
   --chat-border: 51 65 85; /* slate-700 */
   --chat-bg: #0b1220; /* near slate-950 */
+  background-color: #0b1220;
+  color: #e2e8f0;
 }
 
 /* Composer as glass/pill */
@@ -70,9 +72,12 @@ body.dark .chat-composer {
 /* Wallpaper sutil na área de mensagens */
 .chat-bg {
   background-image: url("/images/background.jpg");
+  background-color: #f8fafc;
 }
 
 body.dark .chat-bg {
+  background-image: none;
+  background-color: #0f172a;
 }
 
 /* Variante estilo WhatsApp: verde suave + padrão pontilhado */
@@ -86,4 +91,12 @@ body.dark .chat-bg {
   display: flex !important;
   transform: none !important;
   transition: none !important;
+}
+#chat-left-pane {
+  background-color: #ffffff;
+  color: #1e293b;
+}
+body.dark #chat-left-pane {
+  background-color: #0f172a;
+  color: #e2e8f0;
 }

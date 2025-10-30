@@ -44,6 +44,8 @@ function renderFormattedText(text) {
   });
 }
 
+const HISTORY_PAGE_SIZE = 50;
+
 export default function Chat() {
   // Lists and active conversation
   const [groups, setGroups] = useState([]);
@@ -56,6 +58,10 @@ export default function Chat() {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof document === "undefined") return false;
+    return document.documentElement.classList.contains("dark");
+  });
   const [err, setErr] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const [forwardSource, setForwardSource] = useState(null);
@@ -63,6 +69,10 @@ export default function Chat() {
   const [forwardingTo, setForwardingTo] = useState(false);
   const [forwardError, setForwardError] = useState("");
   const [forwardSuccess, setForwardSuccess] = useState("");
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyDone, setHistoryDone] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyCursor, setHistoryCursor] = useState(null);
   const closeForwardModal = useCallback(() => {
     setForwardSource(null);
   }, []);
@@ -253,6 +263,11 @@ export default function Chat() {
     y: 0,
   });
   const sideMenuRef = useRef(null);
+  const toggleTheme = useCallback(() => {
+    try {
+      window.dispatchEvent(new CustomEvent("chat:themeToggle", { detail: "toggle" }));
+    } catch {}
+  }, []);
   // Emoji list (clean, UTF-8 safe)
   const EMOJIS = React.useMemo(() => {
     try {
@@ -381,6 +396,7 @@ export default function Chat() {
   const fileInputRef = useRef(null);
   const listRef = useRef(null);
   const bottomRef = useRef(null);
+  const suppressAutoScrollRef = useRef(false);
   const mediaRecRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const recTimerRef = useRef(null);
@@ -420,6 +436,18 @@ export default function Chat() {
     dragCounterRef.current = 0;
     setIsDraggingFiles(false);
   }, [active]);
+
+  useEffect(() => {
+    const handleThemeChanged = (event) => {
+      setIsDarkMode(event?.detail === "dark");
+    };
+    window.addEventListener("chat:themeChanged", handleThemeChanged);
+    return () => window.removeEventListener("chat:themeChanged", handleThemeChanged);
+  }, []);
+
+  useEffect(() => {
+    setIsDarkMode(document.documentElement.classList.contains("dark"));
+  }, []);
 
   useEffect(() => {
     if (!forwardSource) {
@@ -1820,9 +1848,20 @@ export default function Chat() {
   useEffect(() => {
     if (!active) return;
     let unsub = () => {};
+    setHistoryError("");
+    setHistoryDone(false);
+    setHistoryCursor(null);
+    setLoadingHistory(false);
     (async () => {
-      const list = toArray(await api.get(`/messages/${active.id}?take=50`));
-      setMessages(list.slice().reverse());
+      const listDesc = toArray(
+        await api.get(
+          `/messages/${active.id}?take=${HISTORY_PAGE_SIZE}`
+        )
+      );
+      const ordered = listDesc.slice().reverse();
+      setMessages(ordered);
+      setHistoryDone(listDesc.length < HISTORY_PAGE_SIZE);
+      setHistoryCursor(ordered[0]?.id || null);
       try {
         await api.post(`/messages/${active.id}/read`, {});
       } catch {}
@@ -1950,8 +1989,73 @@ export default function Chat() {
     }
   }, [active?.id]);
 
+  const loadOlder = useCallback(async () => {
+    if (!active?.id || loadingHistory || historyDone || !historyCursor) return;
+    const listEl = listRef.current;
+    const prevHeight = listEl?.scrollHeight || 0;
+    const prevScroll = listEl?.scrollTop || 0;
+    setLoadingHistory(true);
+    setHistoryError("");
+    try {
+      const resultDesc = toArray(
+        await api.get(
+          `/messages/${active.id}?take=${HISTORY_PAGE_SIZE}&cursor=${historyCursor}`
+        )
+      );
+      if (!resultDesc.length) {
+        setHistoryDone(true);
+        suppressAutoScrollRef.current = false;
+        return;
+      }
+      const asc = resultDesc.slice().reverse();
+      let inserted = [];
+      suppressAutoScrollRef.current = true;
+      setMessages((prev) => {
+        const prevList = Array.isArray(prev) ? prev : [];
+        const existing = new Set(prevList.map((item) => item.id));
+        inserted = asc.filter((item) => !existing.has(item.id));
+        if (!inserted.length) {
+          suppressAutoScrollRef.current = false;
+          return prevList;
+        }
+        return [...inserted, ...prevList];
+      });
+      if (inserted.length) {
+        setHistoryCursor(inserted[0]?.id || null);
+      } else {
+        setHistoryDone(true);
+      }
+      if (resultDesc.length < HISTORY_PAGE_SIZE) {
+        setHistoryDone(true);
+      }
+      setTimeout(() => {
+        const current = listRef.current;
+        if (!current) return;
+        const newHeight = current.scrollHeight;
+        current.scrollTop = Math.max(0, newHeight - prevHeight + prevScroll);
+      }, 0);
+    } catch (e) {
+      setHistoryError(e?.message || "Falha ao carregar mensagens antigas");
+      suppressAutoScrollRef.current = false;
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [active?.id, historyCursor, historyDone, loadingHistory]);
+
+  const handleListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el || historyDone || loadingHistory || !historyCursor) return;
+    if (el.scrollTop <= 80) {
+      loadOlder();
+    }
+  }, [historyCursor, historyDone, loadOlder, loadingHistory]);
+
   // Auto scroll on new messages
   useEffect(() => {
+    if (suppressAutoScrollRef.current) {
+      suppressAutoScrollRef.current = false;
+      return;
+    }
     const t = setTimeout(() => {
       if (listRef.current)
         listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -2753,7 +2857,7 @@ export default function Chat() {
   return (
     <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
       {pushError && (
-        <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow">
+        <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow dark:bg-amber-500/20 dark:text-amber-200">
           {pushError}
         </div>
       )}
@@ -2768,23 +2872,23 @@ export default function Chat() {
       <aside
         id="chat-left-pane"
         ref={leftPaneRef}
-        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto transition-transform duration-200 ease-out ${
+        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 overflow-y-auto transition-transform duration-200 ease-out ${
           isDesktop ? "" : "fixed inset-y-0 left-0 z-40 shadow-xl"
         } ${
           showLeftPane ? "translate-x-0" : "-translate-x-full"
         } lg:static lg:shadow-none lg:translate-x-0`}
       >
-        <div className="px-3 py-2 border-b border-slate-200">
+        <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
           <input
             value={convQuery}
             onChange={(e) => setConvQuery(e.target.value)}
             placeholder="Buscar conversas..."
-            className="w-full border rounded px-3 py-1.5 text-sm"
+            className="w-full border rounded px-3 py-1.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500"
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
-              className="px-2 py-1 text-xs rounded border hover:bg-slate-50"
+              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               onClick={() => {
                 try {
                   document
@@ -2795,7 +2899,7 @@ export default function Chat() {
             >
               Nova conversa
             </button>
-            <label className="text-xs inline-flex items-center gap-1">
+            <label className="text-xs inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
               <input
                 type="checkbox"
                 checked={onlyPinned}
@@ -2803,7 +2907,7 @@ export default function Chat() {
               />{" "}
               Fixadas
             </label>
-            <label className="text-xs inline-flex items-center gap-1">
+            <label className="text-xs inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
               <input
                 type="checkbox"
                 checked={onlyUnread}
@@ -2813,7 +2917,7 @@ export default function Chat() {
             </label>
           </div>
         </div>
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200 flex items-center justify-between">
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-900 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <span>Grupos</span>
           <button
             type="button"
@@ -2864,7 +2968,7 @@ export default function Chat() {
                     y: e.clientY,
                   });
                 }}
-                className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border ${
+                className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border text-slate-700 dark:text-slate-200 ${
                   active?.id === g.id
                     ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
                     : "border-transparent hover:border-slate-200 dark:border-transparent dark:hover:border-slate-600"
@@ -2877,14 +2981,14 @@ export default function Chat() {
                       {g.name}
                     </span>
                     {lastLabel && (
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
                         {lastLabel}
                       </span>
                     )}
                   </div>
                   {preview && (
                     <div
-                      className="text-slate-500 truncate max-w-[220px] text-xs"
+                      className="text-slate-500 dark:text-slate-400 truncate max-w-[220px] text-xs"
                       title={preview}
                     >
                       {preview}
@@ -2901,7 +3005,7 @@ export default function Chat() {
               </button>
             );
           })}
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800 flex items-center justify-between">
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 dark:text-slate-400 dark:border-slate-800 sticky top-0 z-10 bg-white dark:bg-slate-900 flex items-center justify-between">
           <span>Pessoas</span>
           <button
             type="button"
@@ -2958,7 +3062,7 @@ export default function Chat() {
                       y: e.clientY,
                     });
                   }}
-                  className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors ${
+                  className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors text-slate-700 dark:text-slate-200 ${
                     isSelected
                       ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
                       : "hover:bg-slate-50 dark:hover:bg-slate-700/60 border-transparent hover:border-slate-200 dark:hover:border-slate-600"
@@ -2983,8 +3087,8 @@ export default function Chat() {
                         <span
                           className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${
                             String(p.status).toLowerCase() === "online"
-                              ? "bg-green-50 text-green-700 border-green-200"
-                              : "bg-slate-50 text-slate-600 border-slate-200"
+                              ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-500/15 dark:text-green-200 dark:border-green-500/40"
+                              : "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
                           }`}
                         >
                           {p.status}
@@ -2992,7 +3096,7 @@ export default function Chat() {
                       )}
                       {preview && (
                         <span
-                          className="truncate text-xs text-slate-500 max-w-[180px]"
+                          className="truncate text-xs text-slate-500 dark:text-slate-400 max-w-[180px]"
                           title={preview}
                         >
                           {preview}
@@ -3002,7 +3106,7 @@ export default function Chat() {
                   </span>
                   <span className="flex items-center gap-2 shrink-0">
                     {lastLabel && (
-                      <span className="text-[11px] text-slate-500">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
                         {lastLabel}
                       </span>
                     )}
@@ -3025,7 +3129,7 @@ export default function Chat() {
       {sideMenu?.open && (
         <div
           ref={sideMenuRef}
-          className="fixed z-50 w-48 bg-white border border-slate-200 rounded shadow"
+          className="fixed z-50 w-48 bg-white border border-slate-200 rounded shadow dark:bg-slate-800 dark:border-slate-700"
           style={{
             top: Math.max(8, sideMenu.y),
             left: Math.max(8, sideMenu.x),
@@ -3036,7 +3140,7 @@ export default function Chat() {
             <>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60"
                 onClick={() => {
                   if (sideMenu?.id) togglePin(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
@@ -3046,7 +3150,7 @@ export default function Chat() {
               </button>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60"
                 onClick={() => {
                   const key = sideMenu.groupId || sideMenu.id;
                   if (key) toggleMute(key);
@@ -3064,7 +3168,7 @@ export default function Chat() {
             <>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60"
                 onClick={() => {
                   if (sideMenu?.id) togglePin(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
@@ -3074,7 +3178,7 @@ export default function Chat() {
               </button>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60"
                 onClick={() => {
                   if (sideMenu?.id) toggleMute(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
@@ -3116,7 +3220,7 @@ export default function Chat() {
             </div>
           </div>
         )}
-        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
+        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 backdrop-blur font-medium flex items-center gap-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/90 dark:from-slate-900/90 dark:to-slate-900/90">
           {!isDesktop && (
             <button
               type="button"
@@ -3154,14 +3258,14 @@ export default function Chat() {
             </span>
           </button>
           <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm">
-              <IconSearch className="h-4 w-4 text-slate-500" />
+            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-slate-800/80">
+              <IconSearch className="h-4 w-4 text-slate-500 dark:text-slate-400" />
               <input
                 ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar mensagens..."
-                className="w-64 border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
+                className="w-64 border-0 bg-transparent text-sm focus:outline-none focus:ring-0 dark:text-slate-100"
                 aria-label="Buscar mensagens"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -3170,7 +3274,7 @@ export default function Chat() {
                   }
                 }}
               />
-              <span className="text-[11px] text-slate-500">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
                 {searchQuery
                   ? searchMatches.length
                     ? `${searchIndex + 1}/${searchMatches.length}`
@@ -3180,7 +3284,7 @@ export default function Chat() {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  className="px-1.5 py-1 rounded hover:bg-slate-100"
+                  className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                   title="Resultado anterior"
                   onClick={() => jumpToMatch(false)}
                 >
@@ -3188,7 +3292,7 @@ export default function Chat() {
                 </button>
                 <button
                   type="button"
-                  className="px-1.5 py-1 rounded hover:bg-slate-100"
+                  className="px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
                   title="Próximo resultado"
                   onClick={() => jumpToMatch(true)}
                 >
@@ -3220,7 +3324,7 @@ export default function Chat() {
               {convMenuOpen && (
                 <div
                   ref={convMenuRef}
-                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow"
+                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-800"
                   role="menu"
                 >
                   <button
@@ -3263,15 +3367,48 @@ export default function Chat() {
         )}
         <div
           ref={listRef}
+          onScroll={handleListScroll}
           className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-3 ${
             !active ? "hidden" : ""
           }`}
         >
+          {active && (
+            <div className="flex justify-center py-1">
+              {loadingHistory ? (
+                <span className="text-xs text-slate-500">
+                  Carregando mensagens antigas...
+                </span>
+              ) : historyError ? (
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-xs text-red-500">{historyError}</span>
+                  <button
+                    type="button"
+                    onClick={loadOlder}
+                    className="text-[11px] font-medium text-red-500 hover:text-red-600"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              ) : historyDone ? (
+                <span className="text-[11px] uppercase tracking-wide text-slate-400">
+                  Início da conversa
+                </span>
+              ) : historyCursor ? (
+                <button
+                  type="button"
+                  onClick={loadOlder}
+                  className="text-xs font-medium text-blue-600 transition-colors hover:text-blue-500"
+                >
+                  Carregar mensagens anteriores
+                </button>
+              ) : null}
+            </div>
+          )}
           {messages.map((m, i) => {
             const mine = (m.author?.id || m.authorId) === user?.id;
             const bubbleClass = mine
-              ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
-              : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
+              ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words dark:bg-blue-500"
+              : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700/70";
             const lineClass = mine
               ? "flex justify-end mb-2 items-end min-w-0"
               : "flex justify-start mb-2 items-end min-w-0";
@@ -3506,7 +3643,7 @@ export default function Chat() {
                       ...
                     </button>
                     {menuFor === m.id && (
-                      <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded shadow text-sm z-10">
+                          <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded shadow text-sm z-10 dark:bg-slate-800 dark:border-slate-700">
                         <button
                           className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
                           onClick={() => {
@@ -3948,7 +4085,7 @@ export default function Chat() {
 
           {showEmoji && (
             <div
-              className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden"
+              className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden dark:bg-slate-900 dark:border-slate-700"
               style={{
                 left: Math.max(4, emojiPos.left),
                 bottom: Math.max(4, emojiPos.bottom || 0),
@@ -3971,7 +4108,7 @@ export default function Chat() {
                 <>
                   <div
                     ref={setEmojiSectionRef("recent")}
-                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1 dark:bg-slate-900 dark:text-slate-400"
                   >
                     Recentes
                   </div>
@@ -4006,7 +4143,7 @@ export default function Chat() {
                 <>
                   <div
                     ref={setEmojiSectionRef("favoritos")}
-                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1 dark:bg-slate-900 dark:text-slate-400"
                   >
                     Favoritos
                   </div>
@@ -4079,7 +4216,7 @@ export default function Chat() {
                       <div key={`sec-${key}`}>
                         <div
                           ref={setEmojiSectionRef(key)}
-                          className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1 mt-1"
+                          className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1 mt-1 dark:bg-slate-900 dark:text-slate-400"
                         >
                           {key === "recent"
                             ? "Recentes"
@@ -4850,6 +4987,49 @@ export default function Chat() {
                 </button>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white/80 p-2 text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100 dark:hover:bg-slate-700/60"
+              aria-label={isDarkMode ? "Ativar modo claro" : "Ativar modo escuro"}
+              title={isDarkMode ? "Modo claro" : "Modo escuro"}
+            >
+              {isDarkMode ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-5 w-5"
+                >
+                  <path d="M12 18.75A6.75 6.75 0 1 0 5.25 12 6.75 6.75 0 0 0 12 18.75Z" />
+                  <path d="M12 1.5V3" />
+                  <path d="M12 21v1.5" />
+                  <path d="m4.22 4.22 1.06 1.06" />
+                  <path d="m18.72 18.72 1.06 1.06" />
+                  <path d="M1.5 12H3" />
+                  <path d="M21 12h1.5" />
+                  <path d="m4.22 19.78 1.06-1.06" />
+                  <path d="m18.72 5.28 1.06-1.06" />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-5 w-5"
+                >
+                  <path d="M12 3a7.5 7.5 0 0 0 10.5 9.5A9 9 0 1 1 12 3Z" />
+                </svg>
+              )}
+            </button>
           </div>
         </>
       )}
