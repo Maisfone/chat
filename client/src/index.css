@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Optional tweaks */
+html,
+body,
+#root {
+  height: 100%;
+}
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Hide legacy audio record button in chat composer */
+.chat-composer button.border-slate-300 {
+  display: none !important;
+}
+.chat-composer button.border-slate-300 + span {
+  display: none !important;
+}
+
+/* Destaque quando navegar para uma resposta */
+.reply-highlight {
+  animation: replyFlash 2s ease-out;
+}
+@keyframes replyFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35);
+  }
+  30% {
+    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+/* Modern look & feel */
+:root {
+  --chat-border: 226 232 240; /* slate-200 */
+  --chat-blue: 37 99 235; /* blue-600 */
+  --chat-bg: #f8fafc; /* slate-50 */
+}
+body.dark {
+  --chat-border: 51 65 85; /* slate-700 */
+  --chat-bg: #0b1220; /* near slate-950 */
+}
+
+/* Composer as glass/pill */
+.chat-composer {
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  backdrop-filter: blur(8px) saturate(1.05);
+  background: rgba(255, 255, 255, 0.7);
+  border-top: 1px solid rgb(var(--chat-border) / 0.7);
+}
+body.dark .chat-composer {
+  background: rgba(15, 23, 42, 0.6); /* slate-900 */
+}
+.chat-composer input:not([type="file"]) {
+  border-radius: 9999px;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgb(var(--chat-border));
+  box-shadow: 0 1px 1px rgba(2, 6, 23, 0.06);
+}
+.chat-composer input:not([type="file"]):focus {
+  outline: none;
+  border-color: rgb(var(--chat-blue));
+  box-shadow: 0 0 0 2px rgba(var(--chat-blue), 0.35);
+}
+
+/* Wallpaper sutil na área de mensagens */
+.chat-bg {
+  background-image: url("/images/background.jpg");
+}
+
+body.dark .chat-bg {
+}
+
+/* Variante estilo WhatsApp: verde suave + padrão pontilhado */
+/* Modo WhatsApp ativado por atributo no body */
+
+#chat-left-pane,
+#chat-left-pane.hidden,
+#chat-left-pane.md\:hidden,
+#chat-left-pane.translate-x-full,
+#chat-left-pane.-translate-x-full {
+  display: flex !important;
+  transform: none !important;
+  transition: none !important;
+}

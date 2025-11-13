@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "270424"
+      POSTGRES_DB: db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  server:
+    build: ./server
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://postgres:270424@db:5432/db?schema=public"
+      JWT_SECRET: "dev-local-secret-change-me"
+      CORS_ORIGIN: "http://localhost,http://localhost:80,http://localhost:5173"
+      UPLOAD_DIR: "/app/uploads"
+    command: sh -c "npx prisma migrate deploy && npm start"
+    volumes:
+      - server_uploads:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://localhost:3000/api/ping'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  cliente:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: http://localhost:3000/api
+        VITE_SOCKET_URL: http://localhost:3000
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget -qO- http://localhost > /dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  server_uploads:

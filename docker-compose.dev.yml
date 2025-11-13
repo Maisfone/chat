@@ -1,0 +1,76 @@
+networks:
+  minha_rede:
+    external: true
+
+services:
+  server:
+    image: mtinformatica/farmachat:server-1.0.7
+    container_name: farmachat-server
+    environment:
+      DATABASE_URL: postgres://postgres:1oBH87s3FXk8uPfwTUIxMgxu6rJprfsF@postgres:5432/db
+      PORT: 3000
+      JWT_SECRET: 270424@Mel
+      PUBLIC_BASE_URL: https://apichat.farmacon.com.br
+      # Opcional para CORS mais restrito:
+      # CORS_ORIGIN: https://chat.farmacon.com.br
+      # Armazenamento: local (padrão) ou s3
+      # STORAGE_DRIVER: local
+      # Config S3 (descomente para usar provedores S3/MinIO):
+      S3_BUCKET: chatfarmacon
+      S3_REGION: us-central-1
+      S3_ACCESS_KEY_ID: 2RD2GCFVRAWK0ZPVRJRS
+      S3_SECRET_ACCESS_KEY: eqj8nEpHPDrQskkQcq5ZeeS4IEP03E9zHmaUeoCJ
+      S3_ENDPOINT: https://s3.us-central-1.wasabisys.com # ou URL do MinIO/Wasabi
+      # S3_PUBLIC_BASE: https://cdn.seu-dominio.com         # opcional (CDN/CloudFront)
+      # S3_FORCE_PATH_STYLE: "true"                         # para MinIO/compatíveis
+      CORS_ORIGIN: https://chat.farmacon.com.br
+    networks:
+      - minha_rede
+    depends_on:
+      - postgres
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      # API apenas em HTTPS com o resolver em uso no Traefik
+      - traefik.http.routers.farmachat-api.rule=Host(`apichat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-api.entrypoints=websecure
+      - traefik.http.routers.farmachat-api.tls=true
+      - traefik.http.routers.farmachat-api.tls.certresolver=letsencryptresolver
+      - traefik.http.routers.farmachat-api.service=farmachat-api
+      - traefik.http.services.farmachat-api.loadbalancer.server.port=3000
+      - traefik.http.services.farmachat-api.loadbalancer.passHostHeader=true
+    restart: unless-stopped
+    command: sh -c "npx prisma migrate deploy && node src/index.js"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://localhost:3000/api/ping'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  cliente:
+    image: mtinformatica/farmachat:client-1.0.7
+    container_name: farmachat-client
+    depends_on:
+      - server
+    networks:
+      - minha_rede
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=minha_rede
+      # Web (frontend) apenas em HTTPS com o resolver em uso
+      - traefik.http.routers.farmachat-web.rule=Host(`chat.farmacon.com.br`)
+      - traefik.http.routers.farmachat-web.entrypoints=websecure
+      - traefik.http.routers.farmachat-web.tls=true
+      - traefik.http.routers.farmachat-web.tls.certresolver=letsencryptresolver
+      - traefik.http.routers.farmachat-web.service=farmachat-web
+      - traefik.http.services.farmachat-web.loadbalancer.server.port=80
+      - traefik.http.services.farmachat-web.loadbalancer.passHostHeader=true
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
