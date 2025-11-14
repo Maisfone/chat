@@ -44,6 +44,8 @@ function renderFormattedText(text) {
   });
 }
 
+const MESSAGE_PAGE_SIZE = 50;
+
 export default function Chat() {
   // Lists and active conversation
   const [groups, setGroups] = useState([]);
@@ -61,10 +63,6 @@ export default function Chat() {
   const [recording, setRecording] = useState(false);
   const [recError, setRecError] = useState("");
   const [recTime, setRecTime] = useState(0);
-  const newestFirstMessages = useMemo(
-    () => [...(messages || [])].reverse(),
-    [messages]
-  );
 
   // UI state/refs
   // Pinned/Muted groups (local only)
@@ -124,6 +122,36 @@ export default function Chat() {
       return hasManualUnread(groupId) ? 1 : 0;
     },
     [hasManualUnread]
+  );
+  const getConversationMeta = useCallback(
+    (groupId) => {
+      if (!groupId) return null;
+      const groupMeta = (groups || []).find((g) => g.id === groupId);
+      if (groupMeta) return groupMeta;
+      return (dms || []).find((d) => d.groupId === groupId) || null;
+    },
+    [groups, dms]
+  );
+  const markConversationAsUnread = useCallback(
+    (groupId) => {
+      if (!groupId) return;
+      const meta = getConversationMeta(groupId);
+      const messageId =
+        meta?.lastMessage?.id || meta?.message?.id || meta?.id || null;
+      const createdAt =
+        meta?.lastMessage?.createdAt ||
+        meta?.message?.createdAt ||
+        new Date().toISOString();
+      setManualUnreadEntry(groupId, { messageId, createdAt });
+    },
+    [getConversationMeta, setManualUnreadEntry]
+  );
+  const markConversationAsRead = useCallback(
+    (groupId) => {
+      if (!groupId) return;
+      clearManualUnread(groupId);
+    },
+    [clearManualUnread]
   );
   const [conversationOrder, setConversationOrder] = useState(() => {
     try {
@@ -197,16 +225,6 @@ export default function Chat() {
       return n;
     });
   }
-  const markMessageAsUnread = useCallback(
-    (msg) => {
-      if (!msg?.id || !msg?.groupId) return;
-      setManualUnreadEntry(msg.groupId, {
-        messageId: msg.id,
-        createdAt: msg.createdAt || null,
-      });
-    },
-    [setManualUnreadEntry]
-  );
   const [menuFor, setMenuFor] = useState(null);
   const manualUnreadMarker = active?.id ? manualUnread?.[active.id] : null;
   const messageMenuContainerRef = useRef(null);
@@ -429,7 +447,17 @@ export default function Chat() {
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const listRef = useRef(null);
-  const topRef = useRef(null);
+  const skipAutoScrollRef = useRef(false);
+  const [historyCursor, setHistoryCursor] = useState(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const scrollToBottom = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    try {
+      el.scrollTop = el.scrollHeight;
+    } catch {}
+  }, []);
   const mediaRecRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const recTimerRef = useRef(null);
@@ -1513,6 +1541,68 @@ export default function Chat() {
     })();
   }, [dms, ensureConversationOrder]);
 
+  const fetchMessagesPage = useCallback(
+    async (groupId, cursor = null) => {
+      if (!groupId) {
+        return { items: [], nextCursor: null, hasMore: false };
+      }
+      const params = new URLSearchParams();
+      params.set("take", MESSAGE_PAGE_SIZE.toString());
+      if (cursor) params.set("cursor", cursor);
+      const chunk = toArray(
+        await api.get(`/messages/${groupId}?${params.toString()}`)
+      );
+      const normalized = chunk.slice().reverse();
+      const hasMore = chunk.length === MESSAGE_PAGE_SIZE;
+      const nextCursor = hasMore ? chunk[chunk.length - 1]?.id || null : null;
+      return { items: normalized, nextCursor, hasMore };
+    },
+    []
+  );
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!active?.id || historyLoading || !historyHasMore) return;
+    const cursor = historyCursor || (messages[0]?.id ?? null);
+    if (!cursor) return;
+    const el = listRef.current;
+    const prevHeight = el ? el.scrollHeight : null;
+    skipAutoScrollRef.current = true;
+    setHistoryLoading(true);
+    try {
+      const { items, nextCursor, hasMore } = await fetchMessagesPage(
+        active.id,
+        cursor
+      );
+      setMessages((prev) => {
+        const existing = new Set((prev || []).map((m) => m.id));
+        const filtered = items.filter((item) => !existing.has(item.id));
+        if (!filtered.length) return prev;
+        return [...filtered, ...(prev || [])];
+      });
+      setHistoryCursor(nextCursor);
+      setHistoryHasMore(hasMore);
+      requestAnimationFrame(() => {
+        const el2 = listRef.current;
+        if (el2 && prevHeight !== null) {
+          el2.scrollTop = el2.scrollHeight - prevHeight;
+        }
+        skipAutoScrollRef.current = false;
+      });
+    } catch (e) {
+      skipAutoScrollRef.current = false;
+      setErr(e?.message || "Falha ao carregar mensagens antigas");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [
+    active?.id,
+    fetchMessagesPage,
+    historyCursor,
+    historyHasMore,
+    historyLoading,
+    messages,
+  ]);
+
   // Open DM with a person, creating if needed
   async function startConversation(otherId) {
     setErr("");
@@ -1597,8 +1687,13 @@ export default function Chat() {
     if (!active) return;
     let unsub = () => {};
     (async () => {
-      const list = toArray(await api.get(`/messages/${active.id}?take=50`));
-      setMessages(list.slice().reverse());
+      setHistoryCursor(null);
+      setHistoryHasMore(false);
+      setHistoryLoading(false);
+      const { items, nextCursor, hasMore } = await fetchMessagesPage(active.id);
+      setMessages(items);
+      setHistoryCursor(nextCursor);
+      setHistoryHasMore(hasMore);
       try {
         await api.post(`/messages/${active.id}/read`, {});
       } catch {}
@@ -1715,7 +1810,7 @@ export default function Chat() {
       };
     })();
     return () => unsub();
-  }, [active?.id]);
+  }, [active?.id, fetchMessagesPage]);
 
   // Persist active id
   useEffect(() => {
@@ -1726,21 +1821,9 @@ export default function Chat() {
     }
   }, [active?.id]);
 
-  // Auto scroll on new messages (newest stays at top)
   useEffect(() => {
-    const t = setTimeout(() => {
-      if (listRef.current) listRef.current.scrollTop = 0;
-      if (topRef.current) {
-        try {
-          topRef.current.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
-        } catch {}
-      }
-    }, 0);
-    return () => clearTimeout(t);
-  }, [messages, active?.id]);
+    scrollToBottom();
+  }, [messages, active?.id, scrollToBottom]);
 
   const [sending, setSending] = useState(false);
 
@@ -2816,6 +2899,30 @@ export default function Chat() {
                   return muted?.[key] ? "Reativar som" : "Silenciar";
                 })()}
               </button>
+              {sideMenu.groupId && (
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={() => {
+                    markConversationAsUnread(sideMenu.groupId);
+                    setSideMenu((s) => ({ ...s, open: false }));
+                  }}
+                >
+                  Marcar como não lida
+                </button>
+              )}
+              {sideMenu.groupId && hasManualUnread(sideMenu.groupId) && (
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={() => {
+                    markConversationAsRead(sideMenu.groupId);
+                    setSideMenu((s) => ({ ...s, open: false }));
+                  }}
+                >
+                  Marcar como lida
+                </button>
+              )}
             </>
           )}
           {sideMenu.type === "group" && (
@@ -2840,6 +2947,30 @@ export default function Chat() {
               >
                 {muted?.[sideMenu.id] ? "Reativar som" : "Silenciar"}
               </button>
+              {!!sideMenu?.id && (
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={() => {
+                    markConversationAsUnread(sideMenu.id);
+                    setSideMenu((s) => ({ ...s, open: false }));
+                  }}
+                >
+                  Marcar como não lida
+                </button>
+              )}
+              {!!sideMenu?.id && hasManualUnread(sideMenu.id) && (
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={() => {
+                    markConversationAsRead(sideMenu.id);
+                    setSideMenu((s) => ({ ...s, open: false }));
+                  }}
+                >
+                  Marcar como lida
+                </button>
+              )}
             </>
           )}
         </div>
@@ -2993,20 +3124,36 @@ export default function Chat() {
         )}
         <div
           ref={listRef}
-          className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 space-y-3 ${
+          className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 ${
             !active ? "hidden" : ""
           }`}
         >
-          <div ref={topRef} />
-          {newestFirstMessages.map((m, i) => {
-            const mine = (m.author?.id || m.authorId) === user?.id;
-            const bubbleClass = mine
-              ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
-              : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
-            const lineClass = mine
-              ? "flex justify-end mb-2 items-end min-w-0"
-              : "flex justify-start mb-2 items-end min-w-0";
-            const prev = newestFirstMessages[i - 1];
+          <div className="flex min-h-full flex-col">
+            <div className="flex-1 min-h-[1px]" aria-hidden />
+            <div className="flex flex-col space-y-3">
+              {active && (historyHasMore || historyLoading) && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    type="button"
+                    onClick={loadOlderMessages}
+                    disabled={historyLoading}
+                    className="px-4 py-1.5 rounded-full border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {historyLoading
+                      ? "Carregando..."
+                      : "Carregar mensagens anteriores"}
+                  </button>
+                </div>
+              )}
+              {messages.map((m, i) => {
+                const mine = (m.author?.id || m.authorId) === user?.id;
+                const bubbleClass = mine
+                  ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
+                  : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
+                const lineClass = mine
+                  ? "flex justify-end mb-2 items-end min-w-0"
+                  : "flex justify-start mb-2 items-end min-w-0";
+                const prev = messages[i - 1];
             const showDate =
               !prev ||
               new Date(prev.createdAt).toDateString() !==
@@ -3030,11 +3177,11 @@ export default function Chat() {
                     {dateLabel}
                   </div>
                 )}
-                {showManualDivider && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-3 py-1 mb-2">
-                    <span className="font-semibold">
-                      Mensagens marcadas como não lidas
-                    </span>
+              {showManualDivider && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-full px-3 py-1 mb-2">
+                  <span className="font-semibold">
+                    Mensagens marcadas como não lidas
+                  </span>
                     <button
                       type="button"
                       className="text-amber-800 hover:underline font-medium"
@@ -3271,26 +3418,6 @@ export default function Chat() {
                         >
                           Favoritar
                         </button>
-                        <button
-                          className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
-                          onClick={() => {
-                            setMenuFor(null);
-                            markMessageAsUnread(m);
-                          }}
-                        >
-                          Marcar como não lida
-                        </button>
-                        {hasManualUnread(m.groupId) && (
-                          <button
-                            className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
-                            onClick={() => {
-                              setMenuFor(null);
-                              clearManualUnread(m.groupId);
-                            }}
-                          >
-                            Marcar como lida
-                          </button>
-                        )}
                         {(m.author?.id || m.authorId) === user?.id && (
                           <button
                             className="block w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50"
@@ -3317,9 +3444,11 @@ export default function Chat() {
                     )}
                   </div>
                 </div>
-              </div>
-            );
-          })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {replyTo && (
@@ -3676,7 +3805,7 @@ export default function Chat() {
               </span>
             )}
           </div>
-          {((text || "").trim() || attachments.length) && err && (
+          {Boolean((text || "").trim() || attachments.length) && err && (
             <div className="text-sm text-red-600">{err}</div>
           )}
           {!(text || "").trim() && !attachments.length && recError && (
