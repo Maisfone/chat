@@ -4,7 +4,6 @@ npm-debug.log
 *.log
 .git
 .gitignore
-.env
 Dockerfile
 README.md
 tmp*

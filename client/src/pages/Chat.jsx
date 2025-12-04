@@ -57,6 +57,7 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState([]);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [err, setErr] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   // Audio recording
@@ -506,6 +507,40 @@ export default function Chat() {
     if (!newFiles.length) return;
     const mapped = newFiles.map((f) => createAttachment(f));
     setAttachments((prev) => [...prev, ...mapped]);
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggingFiles) setDraggingFiles(true);
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingFiles(false);
+  }
+
+  function handleDropFiles(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingFiles(false);
+    const dropped = [];
+    const dt = e.dataTransfer;
+    if (dt?.items && dt.items.length) {
+      for (let i = 0; i < dt.items.length; i++) {
+        const item = dt.items[i];
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) dropped.push(file);
+        }
+      }
+    } else if (dt?.files && dt.files.length) {
+      for (let i = 0; i < dt.files.length; i++) {
+        dropped.push(dt.files[i]);
+      }
+    }
+    if (dropped.length) addAttachments(dropped);
   }
 
   function removeAttachment(id) {
@@ -2976,7 +3011,18 @@ export default function Chat() {
         </div>
       )}
       {/* Conversation area */}
-      <div className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60">
+      <div
+        className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60"
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDropFiles}
+      >
+        {draggingFiles && (
+          <div className="absolute inset-0 z-20 rounded-xl border-2 border-dashed border-emerald-400 bg-emerald-50/70 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-700 dark:text-emerald-200 text-sm font-medium pointer-events-none">
+            Solte os arquivos aqui para anexar
+          </div>
+        )}
         <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           {!isDesktop && (
             <button
@@ -3631,10 +3677,19 @@ export default function Chat() {
         <form
           ref={composerRef}
           onSubmit={sendMessage}
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDropFiles}
           className={`chat-composer relative flex flex-col gap-2 p-3 border-t border-slate-200/70 bg-white/90 dark:bg-slate-900/70 backdrop-blur ${
             !active ? "hidden" : ""
           }`}
         >
+          {draggingFiles && (
+            <div className="absolute inset-0 z-10 rounded-xl border-2 border-dashed border-emerald-400 bg-emerald-50/80 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-700 dark:text-emerald-200 text-sm font-medium pointer-events-none">
+              Solte os arquivos aqui para anexar
+            </div>
+          )}
           <div className="flex w-full items-center gap-2 flex-wrap md:flex-nowrap">
             <button
               type="button"

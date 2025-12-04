@@ -32,6 +32,9 @@ export default function Phone() {
     try { setSipReg({ registered: localStorage.getItem('sip_registered') === '1' }) } catch {}
     return () => window.removeEventListener('sip:reg', onReg)
   }, [])
+  useEffect(() => {
+    api.post('/phone/me/status', { registered: !!sipReg.registered }).catch(() => {})
+  }, [sipReg.registered])
 
   function startCallTimer() {
     stopCallTimer(); setCallSeconds(0)

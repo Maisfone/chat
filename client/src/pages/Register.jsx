@@ -1,9 +1,12 @@
 ﻿import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { apiPublic } from "../services/api.js";
+import { IconEye, IconEyeOff } from "../components/Icon.jsx";
 
 export default function Register() {
   const nav = useNavigate();
+  const defaultLoginLogo = "";
+  const [loginLogoUrl, setLoginLogoUrl] = useState(defaultLoginLogo);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,6 +24,30 @@ export default function Register() {
       if (preview) URL.revokeObjectURL(preview);
     };
   }, [preview]);
+
+  useEffect(() => {
+    const loadPublicConfig = async () => {
+      try {
+        const base =
+          import.meta.env.VITE_API_URL ||
+          (typeof window !== "undefined"
+            ? `${window.location.origin}/api`
+            : "http://localhost:3000/api");
+        const res = await fetch(
+          `${String(base).replace(/\/$/, "")}/admin/config/public?_=${Date.now()}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Object.prototype.hasOwnProperty.call(data || {}, "loginLogoUrl")) {
+          setLoginLogoUrl(data?.loginLogoUrl || "");
+        }
+      } catch {
+        setLoginLogoUrl(defaultLoginLogo);
+      }
+    };
+    loadPublicConfig();
+  }, []);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -74,30 +101,30 @@ export default function Register() {
                 Crie sua conta em minutos
               </span>
               <h1 className="text-4xl font-semibold leading-tight text-white">
-                Personalize seu atendimento com o poder do Farmachat
+                Personalize seu atendimento com o poder do sistema omnichannel
               </h1>
               <p className="text-lg text-slate-300">
-                Gestão de equipes, dashboards inteligentes e integrações prontas para canais que o seu cliente ama usar.
+                Gestao de equipes, dashboards inteligentes e integracoes prontas para canais que o seu cliente ama usar.
               </p>
             </div>
             <ul className="mt-10 space-y-4 text-sm text-slate-200/80">
               <li className="flex items-start gap-3">
                 <span className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-200">
-                  ✓
+                  ?
                 </span>
-                Fluxos automáticos e organização de filas de atendimento.
+                Fluxos automaticos e organizacao de filas de atendimento.
               </li>
               <li className="flex items-start gap-3">
                 <span className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-200">
-                  ✓
+                  ?
                 </span>
                 Biblioteca de templates, etiquetas e respostas salvas.
               </li>
               <li className="flex items-start gap-3">
                 <span className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-blue-500/20 text-blue-200">
-                  ✓
+                  ?
                 </span>
-                Times ilimitados, usuários convidados e permissões customizadas.
+                Times ilimitados, usuarios convidados e permissoes customizadas.
               </li>
             </ul>
           </div>
@@ -108,7 +135,11 @@ export default function Register() {
             noValidate
           >
             <div className="flex items-center gap-3">
-              <img src="/images/logo.png" alt="Farmachat" className="h-10 w-auto" draggable={false} />
+              {loginLogoUrl ? (
+                <img src={loginLogoUrl} alt="Logo" className="h-10 w-auto" draggable={false} />
+              ) : (
+                <div className="h-10 w-10 rounded-lg border border-white/10 bg-white/10" />
+              )}
               <span className="text-sm font-medium text-slate-500 dark:text-slate-300">
                 Novo portal de atendimento
               </span>
@@ -159,7 +190,7 @@ export default function Register() {
                 <div className="relative">
                   <input
                     id="password"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-28 text-sm text-slate-900 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-400/80 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-14 text-sm text-slate-900 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-400/80 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     placeholder="Crie uma senha"
                     type={showPassword ? "text" : "password"}
                     minLength={8}
@@ -171,8 +202,9 @@ export default function Register() {
                     type="button"
                     onClick={() => setShowPassword((prev) => !prev)}
                     className="absolute inset-y-0 right-3 my-1 inline-flex items-center justify-center rounded-lg border border-transparent px-3 text-xs font-medium text-cyan-600 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700 dark:text-cyan-200 dark:hover:border-cyan-400/50 dark:hover:bg-cyan-500/10"
+                    aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   >
-                    {showPassword ? "Ocultar" : "Mostrar"}
+                    {showPassword ? <IconEyeOff className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -184,7 +216,7 @@ export default function Register() {
                 <div className="relative">
                   <input
                     id="confirm"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-28 text-sm text-slate-900 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-400/80 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-14 text-sm text-slate-900 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-400/80 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     placeholder="Repita a senha"
                     type={showConfirm ? "text" : "password"}
                     minLength={8}
@@ -196,8 +228,9 @@ export default function Register() {
                     type="button"
                     onClick={() => setShowConfirm((prev) => !prev)}
                     className="absolute inset-y-0 right-3 my-1 inline-flex items-center justify-center rounded-lg border border-transparent px-3 text-xs font-medium text-cyan-600 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700 dark:text-cyan-200 dark:hover:border-cyan-400/50 dark:hover:bg-cyan-500/10"
+                    aria-label={showConfirm ? "Ocultar confirmacao" : "Mostrar confirmacao"}
                   >
-                    {showConfirm ? "Ocultar" : "Mostrar"}
+                    {showConfirm ? <IconEyeOff className="w-4 h-4" /> : <IconEye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -237,13 +270,13 @@ export default function Register() {
                 className="mt-1 h-4 w-4 rounded border-slate-300 text-cyan-500 focus:ring-cyan-400 dark:border-slate-600"
               />
               <span>
-                Li e concordo com os termos de uso, política de privacidade e boas práticas da Farmachat.
+                Li e concordo com os termos de uso, política de privacidade e boas práticas do sistema omnichannel.
               </span>
             </label>
 
             {error && (
               <div className="flex items-center gap-2 rounded-xl border border-red-300/60 bg-red-50/80 px-3 py-2 text-sm text-red-600 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
-                <span className="text-base">⚠️</span>
+                <span className="text-base">??</span>
                 <span>{error}</span>
               </div>
             )}
@@ -275,3 +308,5 @@ export default function Register() {
     </div>
   );
 }
+
+

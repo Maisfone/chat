@@ -65,3 +65,23 @@ export function IconStar({ className = "w-4 h-4", filled = false }) {
     </svg>
   );
 }
+
+export function IconEye({ className = "w-5 h-5" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M2.458 12C3.732 7.943 7.523 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.065 7-9.542 7s-8.268-2.943-9.542-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function IconEyeOff({ className = "w-5 h-5" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M17.94 17.94A10.94 10.94 0 0112 19c-4.477 0-8.268-2.943-9.542-7a11.05 11.05 0 012.909-4.516" />
+      <path d="M9.88 9.88a3 3 0 104.24 4.24" />
+      <path d="M3 3l18 18" />
+      <path d="M10.73 5.08A10.95 10.95 0 0112 5c4.477 0 8.268 2.943 9.542 7a11.07 11.07 0 01-2.232 3.592" />
+    </svg>
+  );
+}

@@ -5,6 +5,7 @@ let sipMgr = null
 let initialized = false
 let initPromise = null
 let retryTimer = null
+const LOG_PREFIX = '[SIP]'
 
 function updateRegFlag(registered) {
   try {
@@ -44,10 +45,21 @@ export async function init() {
   initPromise = (async () => {
     try {
       const wsUrl = import.meta.env.VITE_SIP_WS_URL
-      if (!wsUrl) { initialized = true; return null }
+      if (!wsUrl) {
+        console.warn(`${LOG_PREFIX} VITE_SIP_WS_URL não configurado; pulando registro.`)
+        initialized = true
+        return null
+      }
       // Fetch my SIP account
-      const me = await api.get('/phone/me').catch(() => null)
-      if (!me || !me.hasPassword || !me.domain || !me.extension) { initialized = true; return null }
+      const me = await api.get('/phone/me').catch((err) => {
+        console.warn(`${LOG_PREFIX} Falha ao carregar /phone/me:`, err?.message || err)
+        return null
+      })
+      if (!me || !me.hasPassword || !me.domain || !me.extension) {
+        console.warn(`${LOG_PREFIX} Conta SIP incompleta ou sem senha; aguardando configuração.`)
+        initialized = true
+        return null
+      }
 
       sipMgr = await createSipManager({
         wsUrl,
@@ -56,6 +68,11 @@ export async function init() {
         password: me.password || '',
         iceServers: getIceServers(),
       })
+      if (!sipMgr) {
+        console.warn(`${LOG_PREFIX} createSipManager não retornou instância (verifique URL e rede).`)
+        initialized = true
+        return null
+      }
 
       if (sipMgr?.on) {
         try { sipMgr.on('registered', () => updateRegFlag(true)) } catch {}

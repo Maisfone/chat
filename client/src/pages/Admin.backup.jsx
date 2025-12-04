@@ -187,7 +187,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('icon', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/icon', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/icon', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json(); if (data?.chatIconUrl) { setGlobalIconUrl(data.chatIconUrl); showToast('Ícone global atualizado', 'success'); try { localStorage.setItem('chat_icon', data.chatIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')) } catch {} }
     } catch(e){ showToast(e.message||'Falha ao enviar ícone', 'error') }
@@ -198,7 +198,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('wallpaper', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json(); if (data?.chatWallpaperUrl) { setGlobalWallpaperUrl(data.chatWallpaperUrl); document.documentElement.style.setProperty('--chat-wallpaper', `url('${data.chatWallpaperUrl}')`); try { localStorage.setItem('chat_wallpaper', data.chatWallpaperUrl); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {} ; showToast('Papel de parede global atualizado', 'success') }
     } catch(e){ showToast(e.message||'Falha ao enviar papel de parede', 'error') }
@@ -210,7 +210,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('loginLogo', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json()
       setLoginLogoUrl(data?.loginLogoUrl || '')
@@ -223,7 +223,7 @@ export default function Admin() {
     try {
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config', {
         method:'PATCH',
-        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${getToken()||''}` },
+        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${localStorage.getItem('token')||''}` },
         body: JSON.stringify({ loginLogoUrl: loginLogoUrl || null }),
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao salvar') }
@@ -236,7 +236,7 @@ export default function Admin() {
       if (!globalWallpaperUrl) { showToast('Nenhum papel de parede para salvar', 'error'); return }
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config', {
         method:'PATCH',
-        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${getToken()||''}` },
+        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${localStorage.getItem('token')||''}` },
         body: JSON.stringify({ chatWallpaperUrl: globalWallpaperUrl })
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao salvar') }
@@ -250,7 +250,7 @@ export default function Admin() {
       setLoginLogoDeleting(true)
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', {
         method:'DELETE',
-        headers: { Authorization: `Bearer ${getToken()||''}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` },
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao excluir') }
       setLoginLogoUrl('')
@@ -264,7 +264,7 @@ export default function Admin() {
       if (!ok) return
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', {
         method:'DELETE',
-        headers: { Authorization: `Bearer ${getToken()||''}` },
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` },
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao excluir') }
       setGlobalWallpaperUrl('')
@@ -688,22 +688,6 @@ export default function Admin() {
     } catch(e){ showToast(e.message || 'Falha ao excluir grupo', 'error') }
   }
 
-  async function renameGroup(group){
-    if (!group?.id) return
-    const current = (group.name || '').trim()
-    const next = (typeof window !== 'undefined' ? window.prompt('Novo nome do grupo:', current) : current) || ''
-    const name = next.trim()
-    if (!name || name === current) return
-    try {
-      await api.patch(`/groups/${group.id}`, { name })
-      setGroups(prev => prev.map(g => g.id === group.id ? { ...g, name } : g))
-      if (selectedGroup?.id === group.id) setSelectedGroup(prev => ({ ...prev, name }))
-      showToast('Grupo renomeado', 'success')
-    } catch (e) {
-      showToast(e.message || 'Falha ao renomear grupo', 'error')
-    }
-  }
-
   async function refreshMembers(){ if (!selectedGroup) return; try { const ms = await api.get(`/groups/${selectedGroup.id}/members`); setMembers(Array.isArray(ms)?ms:[]) } catch(e){} }
 
   async function addMember(){
@@ -825,119 +809,92 @@ export default function Admin() {
         </section>
       )}
 
-      {tab==='grupos' && (
-        <section className="mt-4 grid grid-cols-1 lg:grid-cols-[0.9fr_1fr_1.6fr] gap-4 items-start">
-          <form onSubmit={createGroup} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-3">
-            <div>
-              <h4 className="font-medium">Novo Grupo</h4>
-              <p className="text-sm text-slate-500">Crie um grupo e depois gerencie os membros ao lado.</p>
-            </div>
+      {tab==='grupos' && ( 
+        <section className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <form onSubmit={createGroup} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2">
+            <h4 className="font-medium">Novo Grupo</h4>
             <input className="border rounded px-3 py-2" placeholder="Nome do grupo" value={gName} onChange={e=>setGName(e.target.value)} />
             <button className="inline-flex items-center justify-center rounded bg-blue-600 text-white px-3 py-2 hover:bg-blue-700">Criar</button>
           </form>
-
           <div className="bg-white p-4 rounded border border-slate-200">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="font-medium">Lista</h4>
-              <div className="text-xs text-slate-500">{groups.length} grupo(s)</div>
-            </div>
+            <div className="flex items-center justify-between"><h4 className="font-medium">Lista</h4><div className="text-xs text-slate-500">{groups.length} grupo(s)</div></div>
             {groups.length ? (
-              <ul className="mt-3 space-y-2 max-h-[420px] overflow-auto pr-1">
-                {groups.map(g => {
-                  const isActive = selectedGroup?.id === g.id
-                  const disableDelete = isActive && members.length > 0
-                  return (
-                    <li
-                      key={g.id}
-                      className={`px-3 py-2 rounded border cursor-pointer transition ${isActive ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
-                      onClick={()=>openGroup(g)}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">{g.name}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50"
-                            onClick={(e)=>{ e.stopPropagation(); renameGroup(g) }}
-                          >Renomear</button>
-                          <button
-                            type="button"
-                            className={`px-2 py-1 text-xs rounded border border-red-300 text-red-700 ${disableDelete ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-50'}`}
-                            disabled={disableDelete}
-                            title={disableDelete ? 'Remova todos os membros antes de excluir' : 'Excluir'}
-                            onClick={(e)=>{ e.stopPropagation(); if (!disableDelete) deleteGroup(g.id) }}
-                          >Excluir</button>
+              <ul className="mt-2 space-y-1">
+                {groups.map(g=> ( 
+                  <li 
+                    key={g.id} 
+                    className={`px-2 py-1 rounded border cursor-pointer ${selectedGroup?.id===g.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+                    onClick={()=>openGroup(g)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="truncate">{g.name}</span>
+                      {(() => { const disable = selectedGroup?.id===g.id && members.length>0; return (
+                        <button
+                          type="button"
+                          className={`px-2 py-1 text-sm rounded border ml-3 border-red-300 text-red-700 ${disable ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-50'}`}
+                          disabled={disable}
+                          title={disable ? 'Remova todos os membros antes de excluir' : 'Excluir'}
+                          onClick={(e)=>{ e.stopPropagation(); if (!disable) deleteGroup(g.id) }}
+                        >Excluir</button>
+                      ) })()}
+                    </div>
+                  </li> 
+                ))} 
+              </ul> 
+            ) : ( 
+              <div className="mt-2 text-sm text-slate-500">Nenhum grupo encontrado.</div> 
+            )} 
+          </div> 
+          {selectedGroup && (
+            <div className="bg-white p-4 rounded border border-slate-200 mt-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-medium">Membros · {selectedGroup.name}</h4>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={`text-xs rounded border px-2 py-1 border-red-300 text-red-700 ${members.length>0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-50'}`}
+                    disabled={members.length>0}
+                    title={members.length>0 ? 'Remova todos os membros antes de excluir' : 'Excluir grupo'}
+                    onClick={()=>{ if (members.length===0) deleteGroup(selectedGroup.id) }}
+                  >Excluir grupo</button>
+                  <button type="button" className="text-xs rounded border px-2 py-1 hover:bg-slate-50" onClick={selectAllMembers}>Selecionar todos</button>
+                  <button type="button" className="text-xs rounded border px-2 py-1 hover:bg-slate-50" onClick={clearMemberSelection}>Limpar seleção</button>
+                  <button type="button" className="text-xs rounded bg-red-600 text-white px-2 py-1 disabled:opacity-60" disabled={!selectedMemberIds.length || removeBulkLoading} onClick={removeSelectedMembers}>{removeBulkLoading?'Removendo...':'Remover seleção'}</button>
+                  <button type="button" className="text-xs text-slate-600 underline" onClick={refreshMembers}>Atualizar</button>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input className="border rounded px-2 py-1 text-sm flex-1" placeholder="Buscar usuário..." value={memberQuery} onChange={e=>setMemberQuery(e.target.value)} />
+                <select className="border rounded px-2 py-1 text-sm" value={selectedUserToAdd} onChange={e=>setSelectedUserToAdd(e.target.value)}>
+                  <option value="">Selecionar usuário</option>
+                  {availableUsersFiltered.map(u=> (
+                    <option key={u.id} value={u.id}>{u.name} • {u.email}</option>
+                  ))}
+                </select>
+                <button type="button" className="px-3 py-1 text-sm rounded bg-blue-600 text-white disabled:opacity-60" disabled={!selectedUserToAdd || addingMember} onClick={addMember}>{addingMember?'Adicionando...':'Adicionar'}</button>
+              </div>
+              {members.length ? (
+                <ul className="mt-3 divide-y divide-slate-200">
+                  {members.map(m => (
+                    <li key={m.userId} className="py-2 flex items-center justify-between">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <input type="checkbox" checked={selectedMemberIds.includes(m.userId)} onChange={()=>toggleSelectMember(m.userId)} />
+                        <div>
+                          <div className="font-medium truncate">{m.user?.name || m.userId}</div>
+                          <div className="text-xs text-slate-500 truncate">{m.user?.email}</div>
                         </div>
                       </div>
+                      <button type="button" className="px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>removeMember(m.userId)}>Remover</button>
                     </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <div className="mt-2 text-sm text-slate-500">Nenhum grupo encontrado.</div>
-            )}
-          </div>
-
-          <div className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-3">
-            {selectedGroup ? (
-              <>
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="font-medium truncate">Membros - {selectedGroup.name}</h4>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      className={`rounded border px-2 py-1 border-red-300 text-red-700 ${members.length>0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-50'}`}
-                      disabled={members.length>0}
-                      title={members.length>0 ? 'Remova os membros antes de excluir' : 'Excluir grupo'}
-                      onClick={()=>{ if (members.length===0) deleteGroup(selectedGroup.id) }}
-                    >Excluir grupo</button>
-                    <button type="button" className="rounded border px-2 py-1 hover:bg-slate-50" onClick={selectAllMembers}>Selecionar todos</button>
-                    <button type="button" className="rounded border px-2 py-1 hover:bg-slate-50" onClick={clearMemberSelection}>Limpar selecao</button>
-                    <button type="button" className="rounded bg-red-600 text-white px-2 py-1 disabled:opacity-60" disabled={!selectedMemberIds.length || removeBulkLoading} onClick={removeSelectedMembers}>{removeBulkLoading?'Removendo...':'Remover selecao'}</button>
-                    <button type="button" className="text-slate-600 underline" onClick={refreshMembers}>Atualizar</button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input className="border rounded px-2 py-1 text-sm flex-1" placeholder="Buscar usuario..." value={memberQuery} onChange={e=>setMemberQuery(e.target.value)} />
-                  <select className="border rounded px-2 py-1 text-sm" value={selectedUserToAdd} onChange={e=>setSelectedUserToAdd(e.target.value)}>
-                    <option value="">Selecionar usuario</option>
-                    {availableUsersFiltered.map(u=> (
-                      <option key={u.id} value={u.id}>{u.name} - {u.email}</option>
-                    ))}
-                  </select>
-                  <button type="button" className="px-3 py-1 text-sm rounded bg-blue-600 text-white disabled:opacity-60" disabled={!selectedUserToAdd || addingMember} onClick={addMember}>{addingMember?'Adicionando...':'Adicionar'}</button>
-                </div>
-
-                {members.length ? (
-                  <div className="max-h-[420px] overflow-auto pr-1">
-                    <ul className="mt-1 divide-y divide-slate-200">
-                      {members.map(m => (
-                        <li key={m.userId} className="py-2 flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex items-center gap-2">
-                            <input type="checkbox" checked={selectedMemberIds.includes(m.userId)} onChange={()=>toggleSelectMember(m.userId)} />
-                            <div>
-                              <div className="font-medium truncate">{m.user?.name || m.userId}</div>
-                              <div className="text-xs text-slate-500 truncate">{m.user?.email}</div>
-                            </div>
-                          </div>
-                          <button type="button" className="px-2 py-1 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>removeMember(m.userId)}>Remover</button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="text-sm text-slate-500">Sem membros ainda.</div>
-                )}
-              </>
-            ) : (
-              <div className="text-sm text-slate-500">Selecione um grupo para ver os membros.</div>
-            )}
-          </div>
-        </section>
-      )}
+                  ))}
+                </ul>
+              ) : (
+                <div className="mt-3 text-sm text-slate-500">Sem membros ainda.</div>
+              )}
+            </div>
+          )}
+        </section> 
+      )} 
 
       {tab==='telefonia' && (
         <section className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -1353,11 +1310,6 @@ export default function Admin() {
     </div>
   )
 }
-
-
-
-
-
 
 
 
