@@ -7,6 +7,7 @@ const router = express.Router()
 
 // Public config (no auth)
 router.get('/public', (req, res) => {
+  res.set('Cache-Control', 'no-store')
   res.json(publicConfig())
 })
 
@@ -54,6 +55,7 @@ router.patch('/', adminRequired, (req, res) => {
   const patch = {}
   if ('chatIconUrl' in req.body) patch.chatIconUrl = req.body.chatIconUrl || null
   if ('chatWallpaperUrl' in req.body) patch.chatWallpaperUrl = req.body.chatWallpaperUrl || null
+  if ('loginLogoUrl' in req.body) patch.loginLogoUrl = req.body.loginLogoUrl || null
   if ('activeAlertSoundId' in req.body) {
     const id = pickString(req.body.activeAlertSoundId)
     if (id && !current.alertSounds?.some((item) => item?.id === id)) {
@@ -91,6 +93,28 @@ router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
     res.json({ ok: true, chatWallpaperUrl: cfg.chatWallpaperUrl })
   } catch (e) {
     res.status(500).json({ error: 'Falha ao salvar papel de parede' })
+  }
+})
+
+// Admin: upload login logo and persist URL
+const uploadLoginLogo = handleUploadSingle('loginLogo')
+router.post('/login-logo', adminRequired, uploadLoginLogo, (req, res) => {
+  try {
+    if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
+    const cfg = updateConfig({ loginLogoUrl: req.file.url })
+    res.json({ ok: true, loginLogoUrl: cfg.loginLogoUrl })
+  } catch (e) {
+    res.status(500).json({ error: 'Falha ao salvar logo do login' })
+  }
+})
+
+// Admin: delete login logo
+router.delete('/login-logo', adminRequired, (req, res) => {
+  try {
+    const cfg = updateConfig({ loginLogoUrl: null })
+    res.status(200).json({ ok: true, loginLogoUrl: cfg.loginLogoUrl || null })
+  } catch (e) {
+    res.status(500).json({ error: 'Falha ao excluir logo do login' })
   }
 })
 

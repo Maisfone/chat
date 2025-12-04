@@ -12,6 +12,9 @@ function ensureDir() {
 
 function normalizeConfig(cfg = {}) {
   const next = { ...cfg }
+  next.chatIconUrl = typeof next.chatIconUrl === 'string' && next.chatIconUrl.trim() ? next.chatIconUrl : null
+  next.chatWallpaperUrl = typeof next.chatWallpaperUrl === 'string' && next.chatWallpaperUrl.trim() ? next.chatWallpaperUrl : null
+  next.loginLogoUrl = typeof next.loginLogoUrl === 'string' && next.loginLogoUrl.trim() ? next.loginLogoUrl : null
   if (!Array.isArray(next.alertSounds)) next.alertSounds = []
   next.alertSounds = next.alertSounds.filter((item) => item && item.id && item.url)
   if (!next.alertSounds.some((item) => item.id === next.activeAlertSoundId)) {
@@ -77,6 +80,7 @@ export function publicConfig() {
   return {
     chatIconUrl: cfg.chatIconUrl || null,
     chatWallpaperUrl: cfg.chatWallpaperUrl || null,
+    loginLogoUrl: cfg.loginLogoUrl || null,
     alertSoundUrl: active?.url || null,
   }
 }
