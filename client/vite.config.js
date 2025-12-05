@@ -7,5 +7,9 @@ export default defineConfig({
   optimizeDeps: {
     include: [],
     noDiscovery: true
+  },
+  build: {
+    // Evita alertas de chunk grande em builds; mantemos limite mais alto para o bundle atual
+    chunkSizeWarningLimit: 1024
   }
 })

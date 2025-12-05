@@ -187,7 +187,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('icon', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/icon', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/icon', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json(); if (data?.chatIconUrl) { setGlobalIconUrl(data.chatIconUrl); showToast('Ícone global atualizado', 'success'); try { localStorage.setItem('chat_icon', data.chatIconUrl); window.dispatchEvent(new Event('chat:iconUpdated')) } catch {} }
     } catch(e){ showToast(e.message||'Falha ao enviar ícone', 'error') }
@@ -198,7 +198,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('wallpaper', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json(); if (data?.chatWallpaperUrl) { setGlobalWallpaperUrl(data.chatWallpaperUrl); document.documentElement.style.setProperty('--chat-wallpaper', `url('${data.chatWallpaperUrl}')`); try { localStorage.setItem('chat_wallpaper', data.chatWallpaperUrl); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {} ; showToast('Papel de parede global atualizado', 'success') }
     } catch(e){ showToast(e.message||'Falha ao enviar papel de parede', 'error') }
@@ -210,7 +210,7 @@ export default function Admin() {
     const form = new FormData()
     form.append('loginLogo', file)
     try {
-      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', { method:'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` }, body: form })
+      const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', { method:'POST', headers: { Authorization: `Bearer ${getToken()||''}` }, body: form })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha no upload') }
       const data = await res.json()
       setLoginLogoUrl(data?.loginLogoUrl || '')
@@ -223,7 +223,7 @@ export default function Admin() {
     try {
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config', {
         method:'PATCH',
-        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${getToken()||''}` },
         body: JSON.stringify({ loginLogoUrl: loginLogoUrl || null }),
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao salvar') }
@@ -236,7 +236,7 @@ export default function Admin() {
       if (!globalWallpaperUrl) { showToast('Nenhum papel de parede para salvar', 'error'); return }
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config', {
         method:'PATCH',
-        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+        headers: { 'Content-Type':'application/json', Authorization: `Bearer ${getToken()||''}` },
         body: JSON.stringify({ chatWallpaperUrl: globalWallpaperUrl })
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao salvar') }
@@ -250,7 +250,7 @@ export default function Admin() {
       setLoginLogoDeleting(true)
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/login-logo', {
         method:'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+        headers: { Authorization: `Bearer ${getToken()||''}` },
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao excluir') }
       setLoginLogoUrl('')
@@ -264,7 +264,7 @@ export default function Admin() {
       if (!ok) return
       const res = await fetch(((import.meta.env.VITE_API_URL) || (typeof window!=='undefined'? `${window.location.origin}/api` : 'http://localhost:3000/api')) + '/admin/config/wallpaper', {
         method:'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')||''}` },
+        headers: { Authorization: `Bearer ${getToken()||''}` },
       })
       if (!res.ok) { const t = await res.text(); throw new Error(t||'Falha ao excluir') }
       setGlobalWallpaperUrl('')

@@ -154,58 +154,6 @@ export default function Chat() {
     },
     [clearManualUnread]
   );
-  const [conversationOrder, setConversationOrder] = useState(() => {
-    try {
-      const raw = localStorage.getItem("chat_conversation_order");
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const persistConversationOrder = useCallback((next) => {
-    try {
-      localStorage.setItem("chat_conversation_order", JSON.stringify(next));
-    } catch {}
-  }, []);
-  const bumpConversationOrder = useCallback(
-    (id) => {
-      if (!id) return;
-      setConversationOrder((prev) => {
-        const next = [id, ...prev.filter((x) => x !== id)];
-        persistConversationOrder(next);
-        return next;
-      });
-    },
-    [persistConversationOrder]
-  );
-  const ensureConversationOrder = useCallback(
-    (idsWithTimestamp = []) => {
-      if (!idsWithTimestamp.length) return;
-      setConversationOrder((prev) => {
-        const seen = new Set(prev);
-        const appended = [];
-        idsWithTimestamp
-          .filter((entry) => entry && entry.id)
-          .sort((a, b) => {
-            const ta = coerceTimestamp(a.ts);
-            const tb = coerceTimestamp(b.ts);
-            return tb - ta;
-          })
-          .forEach(({ id }) => {
-            if (!seen.has(id)) {
-              appended.push(id);
-              seen.add(id);
-            }
-          });
-        if (!appended.length) return prev;
-        const next = [...prev, ...appended];
-        persistConversationOrder(next);
-        return next;
-      });
-    },
-    [persistConversationOrder]
-  );
   function togglePin(id) {
     setPinned((prev) => {
       const n = { ...(prev || {}) };
@@ -889,15 +837,6 @@ export default function Chat() {
     return coerceTimestamp(item._lastAt);
   }, []);
 
-  const getOrderRank = useCallback(
-    (id) => {
-      if (!id) return Number.MAX_SAFE_INTEGER;
-      const index = conversationOrder.indexOf(id);
-      return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
-    },
-    [conversationOrder]
-  );
-
   function updateConversationActivity(msg, { mine = false } = {}) {
     if (!msg || !msg.groupId) return;
     const ts = (() => {
@@ -910,7 +849,7 @@ export default function Chat() {
     let preview = previewFromMessage(msg);
     if (mine && preview) preview = `Você: ${preview}`;
     const isActive = active?.id === msg.groupId;
-    bumpConversationOrder(msg.groupId);
+
     setGroups((prev) =>
       (prev || []).map((g) => {
         if (!g || g.id !== msg.groupId) return g;
@@ -1310,16 +1249,6 @@ export default function Chat() {
         const dmListRaw = toArray(await api.get("/dm"));
         const normalizedDms = normalizeConversationList(dmListRaw);
         setDms(normalizedDms);
-        ensureConversationOrder([
-          ...normalizedGroups.map((g) => ({
-            id: g.id,
-            ts: conversationOrderTs(g),
-          })),
-          ...normalizedDms.map((d) => ({
-            id: d.groupId,
-            ts: conversationOrderTs(d),
-          })),
-        ]);
         const ppl = toArray(await api.get("/users/all"));
         setPeople(ppl);
         // restore last active
@@ -1357,7 +1286,7 @@ export default function Chat() {
         setErr("Falha ao carregar listas");
       }
     })();
-  }, [hideLeftIfMobile, ensureConversationOrder, conversationOrderTs]);
+  }, [hideLeftIfMobile]);
 
   // Força a sidebar esquerda a permanecer visível em telas largas caso algum script externo altere o estilo
   useEffect(() => {
@@ -1448,16 +1377,14 @@ export default function Chat() {
             { id: groupId, groupId, other, _unread: 0, _lastAt: nowTs },
           ];
         });
-        ensureConversationOrder([{ id: groupId, ts: nowTs }]);
+
         // entra na sala para receber mensagens em tempo real
         s.emit("group:join", groupId);
       } catch {}
     };
     s.on("dm:created", onDmCreated);
     return () => s.off("dm:created", onDmCreated);
-  }, [user?.id, ensureConversationOrder]);
-
-  // Realtime: atualizar lista de pessoas quando usuÃ¡rios forem criados/atualizados/excluÃ­dos
+  }, [user?.id]);
   useEffect(() => {
     const s = ioClient();
     function byName(a, b) {
@@ -1565,16 +1492,10 @@ export default function Chat() {
                 : x
             )
           );
-          ensureConversationOrder(
-            Object.entries(updates).map(([groupId, meta]) => ({
-              id: groupId,
-              ts: meta.last,
-            }))
-          );
         }
       } catch {}
     })();
-  }, [dms, ensureConversationOrder]);
+  }, [dms, user?.id]);
 
   const fetchMessagesPage = useCallback(
     async (groupId, cursor = null) => {
@@ -1695,12 +1616,6 @@ export default function Chat() {
           ];
         });
         if (!alreadyHad) {
-          ensureConversationOrder([
-            {
-              id: dm.groupId,
-              ts: coerceTimestamp(dm.lastMessageAt) || Date.now(),
-            },
-          ]);
         }
         setActive({
           id: dm.groupId,
@@ -2423,9 +2338,6 @@ export default function Chat() {
       const pa = pinned?.[a.id] ? 1 : 0;
       const pb = pinned?.[b.id] ? 1 : 0;
       if (pa !== pb) return pb - pa; // pinned first
-      const ra = getOrderRank(a.id);
-      const rb = getOrderRank(b.id);
-      if (ra !== rb) return ra - rb;
       const la = conversationOrderTs(a);
       const lb = conversationOrderTs(b);
       if (la !== lb) return lb - la;
@@ -2446,7 +2358,6 @@ export default function Chat() {
     onlyPinned,
     onlyUnread,
     groupIndexById,
-    getOrderRank,
     conversationOrderTs,
     getEffectiveUnread,
   ]);
@@ -2529,9 +2440,6 @@ export default function Chat() {
       if (pa !== pb) return pb - pa; // pinned first
       const da = dmByOtherId[a.id];
       const db = dmByOtherId[b.id];
-      const ra = getOrderRank(da?.groupId);
-      const rb = getOrderRank(db?.groupId);
-      if (ra !== rb) return ra - rb;
       const la = conversationOrderTs(da);
       const lb = conversationOrderTs(db);
       if (la !== lb) return lb - la;
@@ -2558,7 +2466,6 @@ export default function Chat() {
     dmByOtherId,
     peopleIndexById,
     dmOrderByOtherId,
-    getOrderRank,
     conversationOrderTs,
     getEffectiveUnread,
   ]);
@@ -2611,16 +2518,10 @@ export default function Chat() {
                 : x
             )
           );
-          ensureConversationOrder(
-            Object.entries(updates).map(([id, meta]) => ({
-              id,
-              ts: meta.last,
-            }))
-          );
         }
       } catch {}
     })();
-  }, [groups, ensureConversationOrder]);
+  }, [groups, user?.id]);
 
   return (
     <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
@@ -4782,3 +4683,8 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     </span>
   );
 }
+
+
+
+
+

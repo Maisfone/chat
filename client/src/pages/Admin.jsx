@@ -835,7 +835,6 @@ export default function Admin() {
             <input className="border rounded px-3 py-2" placeholder="Nome do grupo" value={gName} onChange={e=>setGName(e.target.value)} />
             <button className="inline-flex items-center justify-center rounded bg-blue-600 text-white px-3 py-2 hover:bg-blue-700">Criar</button>
           </form>
-
           <div className="bg-white p-4 rounded border border-slate-200">
             <div className="flex items-center justify-between gap-2">
               <h4 className="font-medium">Lista</h4>
@@ -879,7 +878,6 @@ export default function Admin() {
               <div className="mt-2 text-sm text-slate-500">Nenhum grupo encontrado.</div>
             )}
           </div>
-
           <div className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-3">
             {selectedGroup ? (
               <>
@@ -890,7 +888,7 @@ export default function Admin() {
                       type="button"
                       className={`rounded border px-2 py-1 border-red-300 text-red-700 ${members.length>0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-50'}`}
                       disabled={members.length>0}
-                      title={members.length>0 ? 'Remova os membros antes de excluir' : 'Excluir grupo'}
+                      title={members.length>0 ? 'Remova todos os membros antes de excluir' : 'Excluir grupo'}
                       onClick={()=>{ if (members.length===0) deleteGroup(selectedGroup.id) }}
                     >Excluir grupo</button>
                     <button type="button" className="rounded border px-2 py-1 hover:bg-slate-50" onClick={selectAllMembers}>Selecionar todos</button>
@@ -915,7 +913,7 @@ export default function Admin() {
                   <div className="max-h-[420px] overflow-auto pr-1">
                     <ul className="mt-1 divide-y divide-slate-200">
                       {members.map(m => (
-                        <li key={m.userId} className="py-2 flex items-center justify-between gap-3">
+                        <li key={m.userId} className="py-2 flex items-center justify-between">
                           <div className="min-w-0 flex items-center gap-2">
                             <input type="checkbox" checked={selectedMemberIds.includes(m.userId)} onChange={()=>toggleSelectMember(m.userId)} />
                             <div>
@@ -936,8 +934,8 @@ export default function Admin() {
               <div className="text-sm text-slate-500">Selecione um grupo para ver os membros.</div>
             )}
           </div>
-        </section>
-      )}
+        </section> 
+      )} 
 
       {tab==='telefonia' && (
         <section className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -1181,7 +1179,7 @@ export default function Admin() {
                   </div>
                 </div>
               </div>
-              {/* Logo da tela de login */}\n              <div className="p-3 rounded border border-slate-200 bg-slate-50/60">
+              {/* Logo da tela de login */}<div className="p-3 rounded border border-slate-200 bg-slate-50/60">
                 <h4 className="font-medium">Logo da tela de login</h4>
                 <div className="mt-2 flex items-center gap-3">
                   {loginLogoUrl ? (
@@ -1212,7 +1210,7 @@ export default function Admin() {
                 </div>
                 <div className="mt-2 text-xs text-slate-500">Exibido na página de login. Reenvie para substituir.</div>
               </div>
-              {/* Wallpaper global */}\n              <div className="p-3 rounded border border-slate-200 bg-slate-50/60">
+              {/* Wallpaper global */}<div className="p-3 rounded border border-slate-200 bg-slate-50/60">
                 <h4 className="font-medium">Papel de parede (conversas)</h4>
                 <div className="mt-2 flex items-center gap-3">
                   <div className="w-28 h-16 rounded border bg-slate-100 overflow-hidden">
@@ -1273,45 +1271,6 @@ export default function Admin() {
             </div>
           </div>
 
-          {/* Preferências do seu navegador */}
-          <div className="bg-white p-4 rounded border border-slate-200">
-            <h3 className="text-lg font-semibold">Aparência Local</h3>
-            <form onSubmit={saveCfg} className="mt-2 flex flex-col gap-3">
-              <div>
-                <label className="text-sm text-slate-700">Ícone local</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <input id="cfg-file" className="hidden" type="file" accept="image/*" onChange={onCfgFile} />
-                  <button type="button" className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50" onClick={()=>document.getElementById('cfg-file')?.click()}>Escolher</button>
-                  {(cfgIcon||cfgUrl) && <button type="button" className="px-3 py-2 rounded border border-red-300 text-red-700 hover:bg-red-50" onClick={()=>{ setCfgIcon(''); setCfgUrl('') }}>Limpar</button>}
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 items-center">
-                  <div>
-                    <div className="text-xs text-slate-500">Preview</div>
-                    { (cfgIcon || cfgUrl) ? (
-                      <img src={cfgIcon || cfgUrl} alt="ícone" className="mt-1 w-10 h-10 rounded-full object-cover border" />
-                    ) : (
-                      <div className="mt-1 w-10 h-10 rounded-full border bg-slate-100" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-500">URL (opcional)</div>
-                    <input className="border rounded px-3 py-2 w-full" placeholder="https://..." value={cfgUrl} onChange={e=>{ setCfgUrl(e.target.value); if (e.target.value) setCfgIcon('') }} />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm text-slate-700">Tema do papel de parede</label>
-                <select className="mt-1 border rounded px-3 py-2 w-full" value={cfgBg} onChange={e=>setCfgBg(e.target.value)}>
-                  <option value="default">Padrão</option>
-                  <option value="whatsapp">WhatsApp</option>
-                </select>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button type="submit" className="px-3 py-2 rounded bg-blue-600 text-white">Salvar local</button>
-              </div>
-            </form>
-          </div>
-
           {/* Segurança */}
           <form onSubmit={changeAdminPassword} className="bg-white p-4 rounded border border-slate-200 flex flex-col gap-2 lg:col-span-3">
             <h3 className="text-lg font-semibold">Conta do administrador</h3>
@@ -1353,11 +1312,6 @@ export default function Admin() {
     </div>
   )
 }
-
-
-
-
-
 
 
 
