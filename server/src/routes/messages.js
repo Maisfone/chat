@@ -65,7 +65,7 @@ router.get('/:groupId', async (req, res) => {
 router.post('/:groupId', async (req, res) => {
   const { groupId } = req.params
   const schema = z.object({
-    type: z.enum(['text','gif','sticker','image']).default('text'),
+    type: z.enum(['text','gif','sticker','image','audio']).default('text'),
     content: z.string().min(1),
     replyToId: z.string().uuid().optional().nullable()
   })
@@ -74,12 +74,16 @@ router.post('/:groupId', async (req, res) => {
     // valida se usuário é membro do grupo
     const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
     if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
-    const msg = await prisma.message.create({
-      data: { groupId, authorId: req.user.id, type, content, replyToId: replyToId || null },
-      include: {
-        author: { select: { id: true, name: true, avatarUrl: true } },
-        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
-      }
+    const msg = await prisma.$transaction(async (tx) => {
+      const created = await tx.message.create({
+        data: { groupId, authorId: req.user.id, type, content, replyToId: replyToId || null },
+        include: {
+          author: { select: { id: true, name: true, avatarUrl: true } },
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+        }
+      })
+      await tx.group.update({ where: { id: groupId }, data: { lastMessageAt: created.createdAt } })
+      return created
     })
     req.io.to(groupId).emit('message:new', msg)
     // Push para membros (exclui autor)
@@ -115,12 +119,16 @@ router.post('/:groupId/upload', upload, async (req, res) => {
   } catch {}
   const replyToId = typeof req.query.replyToId === 'string' ? req.query.replyToId : null
   const storedType = kind === 'file' ? 'sticker' : kind
-  const msg = await prisma.message.create({
-    data: { groupId, authorId: req.user.id, type: storedType, content: contentUrl, replyToId },
-    include: {
-      author: { select: { id: true, name: true, avatarUrl: true } },
-      replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
-    }
+  const msg = await prisma.$transaction(async (tx) => {
+    const created = await tx.message.create({
+      data: { groupId, authorId: req.user.id, type: storedType, content: contentUrl, replyToId },
+      include: {
+        author: { select: { id: true, name: true, avatarUrl: true } },
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+      }
+    })
+    await tx.group.update({ where: { id: groupId }, data: { lastMessageAt: created.createdAt } })
+    return created
   })
   req.io.to(groupId).emit('message:new', msg)
   try {

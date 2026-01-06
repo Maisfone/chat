@@ -46,12 +46,15 @@ model Group {
   name       String
   isPrivate  Boolean  @default(false) @map("is_private")
   avatarUrl  String?  @map("avatar_url")
+  lastMessageAt DateTime @default(now()) @map("last_message_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
   members    GroupMember[]
   messages   Message[]
 
   directThread DirectThread?
+
+  @@index([lastMessageAt])
 }
 
 model GroupMember {

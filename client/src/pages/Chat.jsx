@@ -269,6 +269,33 @@ export default function Chat() {
     y: 0,
   });
   const sideMenuRef = useRef(null);
+  // Forward message modal
+  const [forwardSource, setForwardSource] = useState(null);
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardLoading, setForwardLoading] = useState(false);
+  const [forwardErr, setForwardErr] = useState("");
+  const [forwardQuery, setForwardQuery] = useState("");
+  const handleForwardTo = useCallback(
+    async (targetId) => {
+      if (!forwardSource || !targetId) return;
+      setForwardErr("");
+      setForwardLoading(true);
+      try {
+        const payload = {
+          type: forwardSource.type || "text",
+          content: forwardSource.content || "",
+        };
+        await api.post(`/messages/${targetId}`, payload);
+        setForwardOpen(false);
+        setForwardSource(null);
+      } catch (e) {
+        setForwardErr(e?.message || "Falha ao encaminhar mensagem");
+      } finally {
+        setForwardLoading(false);
+      }
+    },
+    [forwardSource]
+  );
   // Emoji list (clean, UTF-8 safe)
   const EMOJIS = React.useMemo(() => {
     try {
@@ -331,6 +358,36 @@ export default function Chat() {
   const setEmojiSectionRef = (key) => (el) => {
     if (el) emojiSectionRefs.current[key] = el;
   };
+  const forwardDestinations = useMemo(() => {
+    const items = [];
+    (groups || []).forEach((g) => {
+      if (g?.id && g.id !== active?.id) {
+        items.push({ id: g.id, name: g.name || "Grupo", isDM: false });
+      }
+    });
+    (dms || []).forEach((dm) => {
+      if (dm?.groupId && dm.groupId !== active?.id) {
+        items.push({
+          id: dm.groupId,
+          name: dm.other?.name || "Direto",
+          isDM: true,
+        });
+      }
+    });
+    const seen = new Set();
+    return items.filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }, [groups, dms, active?.id]);
+  const filteredForwardDestinations = useMemo(() => {
+    const q = (forwardQuery || "").trim().toLowerCase();
+    if (!q) return forwardDestinations;
+    return forwardDestinations.filter((dest) =>
+      (dest.name || "").toLowerCase().includes(q)
+    );
+  }, [forwardDestinations, forwardQuery]);
   useEffect(
     () => () => {
       if (highlightTimeoutRef.current) {
@@ -749,6 +806,16 @@ export default function Chat() {
     return 0;
   }
 
+  function arrivalTimestamp(item, fallbackTs = 0) {
+    const base = fallbackTs || 0;
+    if (!item) return base;
+    const ts =
+      coerceTimestamp(item._arrivedAt) ||
+      coerceTimestamp(item.createdAt) ||
+      coerceTimestamp(item.group?.createdAt);
+    return ts || base;
+  }
+
   function normalizeConversationMeta(item, fallbackTs) {
     if (!item) return item;
     const lastMessage =
@@ -799,42 +866,37 @@ export default function Chat() {
     const authorId =
       lastMessage?.author?.id ||
       lastMessage?.authorId ||
-      lastMessage?.userId ||
-      null;
+       lastMessage?.userId ||
+       null;
     const isIncoming =
       authorId && user?.id ? authorId !== user.id : Boolean(lastMessage?.from);
     const incomingTs = isIncoming ? ts : existingIncoming;
+    const arrival = arrivalTimestamp(item, fallbackTs);
     return {
       ...item,
       _lastAt: ts,
       _lastPreview: preview,
       _lastReceivedAt: incomingTs,
+      _arrivedAt: arrival,
     };
   }
 
-  function normalizeConversationList(list) {
-    const base = Date.now();
-    return (list || [])
-      .map((item, idx) => normalizeConversationMeta(item, base - idx))
-      .sort((a, b) => {
-        const pa = pinned?.[a?.id] ? 1 : 0;
-        const pb = pinned?.[b?.id] ? 1 : 0;
-        if (pa !== pb) return pb - pa;
-        const oa = conversationOrderTs(a);
-        const ob = conversationOrderTs(b);
-        if (oa !== ob) return ob - oa;
-        const la = coerceTimestamp(a?._lastAt);
-        const lb = coerceTimestamp(b?._lastAt);
-        if (la !== lb) return lb - la;
-        return coerceTimestamp(b?.updatedAt) - coerceTimestamp(a?.updatedAt);
-      });
-  }
+  const normalizeConversationList = useCallback(
+    (list) => {
+      const base = Date.now();
+      // Mantém a ordem fornecida pelo backend (já em last_message_at DESC)
+      return (list || []).map((item, idx) =>
+        normalizeConversationMeta(item, base - idx)
+      );
+    },
+    [normalizeConversationMeta]
+  );
 
   const conversationOrderTs = useCallback((item) => {
     if (!item) return 0;
+    const lastAt = coerceTimestamp(item._lastAt);
     const incoming = coerceTimestamp(item._lastReceivedAt);
-    if (incoming > 0) return incoming;
-    return coerceTimestamp(item._lastAt);
+    return Math.max(lastAt, incoming);
   }, []);
 
   function updateConversationActivity(msg, { mine = false } = {}) {
@@ -1240,55 +1302,98 @@ export default function Chat() {
   }, [dmOtherId, messages, user?.id]);
 
   // Load lists (groups, DMs, people)
-  useEffect(() => {
-    (async () => {
+  const refreshInFlightRef = useRef(false);
+  const refreshTimeoutRef = useRef(null);
+  const refreshConversations = useCallback(
+    async ({ restoreActive = false } = {}) => {
+      if (refreshInFlightRef.current) return;
+      refreshInFlightRef.current = true;
       try {
         const rawGroups = toArray(await api.get("/groups"));
         const normalizedGroups = normalizeConversationList(rawGroups);
-        setGroups(normalizedGroups);
         const dmListRaw = toArray(await api.get("/dm"));
         const normalizedDms = normalizeConversationList(dmListRaw);
+        setGroups(normalizedGroups);
         setDms(normalizedDms);
-        const ppl = toArray(await api.get("/users/all"));
-        setPeople(ppl);
-        // restore last active
-        const saved = localStorage.getItem("chat_active");
-        if (saved) {
-          const foundG = normalizedGroups.find((x) => x.id === saved);
-          if (foundG) {
-            setActive(foundG);
-            hideLeftIfMobile();
-            return;
+        if (restoreActive) {
+          const saved = localStorage.getItem("chat_active");
+          if (saved) {
+            const foundG = normalizedGroups.find((x) => x.id === saved);
+            if (foundG) {
+              setActive(foundG);
+              hideLeftIfMobile();
+              return { normalizedGroups, normalizedDms };
+            }
+            const foundDM = normalizedDms.find((x) => x.groupId === saved);
+            if (foundDM) {
+              setActive({
+                id: foundDM.groupId,
+                name: foundDM.other?.name || "Direto",
+                avatarUrl: foundDM.other?.avatarUrl || undefined,
+              });
+              hideLeftIfMobile();
+              return { normalizedGroups, normalizedDms };
+            }
           }
-          const foundDM = normalizedDms.find((x) => x.groupId === saved);
-          if (foundDM) {
+          if (normalizedGroups[0]) {
+            setActive(normalizedGroups[0]);
+            hideLeftIfMobile();
+          } else if (normalizedDms[0]) {
             setActive({
-              id: foundDM.groupId,
-              name: foundDM.other?.name || "Direto",
-              avatarUrl: foundDM.other?.avatarUrl || undefined,
+              id: normalizedDms[0].groupId,
+              name: normalizedDms[0].other?.name || "Direto",
+              avatarUrl: normalizedDms[0].other?.avatarUrl || undefined,
             });
             hideLeftIfMobile();
-            return;
           }
         }
-        if (normalizedGroups[0]) {
-          setActive(normalizedGroups[0]);
-          hideLeftIfMobile();
-        } else if (normalizedDms[0]) {
-          setActive({
-            id: normalizedDms[0].groupId,
-            name: normalizedDms[0].other?.name || "Direto",
-            avatarUrl: normalizedDms[0].other?.avatarUrl || undefined,
-          });
-          hideLeftIfMobile();
-        }
+        return { normalizedGroups, normalizedDms };
+      } finally {
+        refreshInFlightRef.current = false;
+      }
+    },
+    [normalizeConversationList, hideLeftIfMobile]
+  );
+
+  const lastRefreshAtRef = useRef(0);
+  const refreshConversationsSoon = useCallback(() => {
+    const MIN_INTERVAL_MS = 1500; // evita flood mas mantém ordem pelo backend
+    const now = Date.now();
+    const elapsed = now - lastRefreshAtRef.current;
+    const trigger = async () => {
+      try {
+        await refreshConversations();
+      } catch (e) {
+        setErr((prev) => prev || e?.message || "Falha ao atualizar listas");
+      }
+    };
+    if (elapsed >= MIN_INTERVAL_MS && !refreshInFlightRef.current) {
+      lastRefreshAtRef.current = now;
+      trigger();
+      return;
+    }
+    if (refreshTimeoutRef.current) return;
+    const delay = Math.max(0, MIN_INTERVAL_MS - elapsed);
+    refreshTimeoutRef.current = setTimeout(async () => {
+      refreshTimeoutRef.current = null;
+      lastRefreshAtRef.current = Date.now();
+      await trigger();
+    }, delay);
+  }, [refreshConversations]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await refreshConversations({ restoreActive: true });
+        const ppl = toArray(await api.get("/users/all"));
+        setPeople(ppl);
       } catch (e) {
         setErr("Falha ao carregar listas");
       }
     })();
-  }, [hideLeftIfMobile]);
-
-  // Força a sidebar esquerda a permanecer visível em telas largas caso algum script externo altere o estilo
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+// Força a sidebar esquerda a permanecer visível em telas largas caso algum script externo altere o estilo
   useEffect(() => {
     const el = leftPaneRef.current;
     if (!el) return;
@@ -1370,11 +1475,19 @@ export default function Chat() {
         const other = userA.id === meId ? userB : userA;
         // adiciona DM se ainda nÃ£o existir
         const nowTs = Date.now();
+        const arrivedAt = arrivalTimestamp(payload, nowTs);
         setDms((prev) => {
           if ((prev || []).some((d) => d.groupId === groupId)) return prev;
           return [
             ...(prev || []),
-            { id: groupId, groupId, other, _unread: 0, _lastAt: nowTs },
+            {
+              id: groupId,
+              groupId,
+              other,
+              _unread: 0,
+              _lastAt: nowTs,
+              _arrivedAt: arrivedAt,
+            },
           ];
         });
 
@@ -1592,6 +1705,11 @@ export default function Chat() {
           const existing = prev.find((x) => x.groupId === dm.groupId);
           const preservedLast = existing?._lastAt;
           const preservedUnread = existing?._unread || 0;
+          const preservedArrival =
+            existing?._arrivedAt ||
+            coerceTimestamp(dm?.createdAt) ||
+            coerceTimestamp(dm?.group?.createdAt) ||
+            Date.now();
           if (existing) {
             return prev.map((item) =>
               item.groupId === dm.groupId
@@ -1599,7 +1717,8 @@ export default function Chat() {
                     ...item,
                     other: dm.other,
                     _unread: preservedUnread,
-                    _lastAt: preservedLast,
+                    _lastAt: preservedLast ?? preservedArrival,
+                    _arrivedAt: preservedArrival,
                   }
                 : item
             );
@@ -1611,7 +1730,8 @@ export default function Chat() {
               groupId: dm.groupId,
               other: dm.other,
               _unread: preservedUnread,
-              _lastAt: preservedLast,
+              _lastAt: preservedLast ?? preservedArrival,
+              _arrivedAt: preservedArrival,
             },
           ];
         });
@@ -1691,6 +1811,7 @@ export default function Chat() {
           } catch {}
         }
         updateConversationActivity(msg, { mine });
+        refreshConversationsSoon();
         if (isActive) {
           setMessages((prev) => {
             if ((prev || []).some((m) => m.id === msg.id)) return prev;
@@ -1805,6 +1926,7 @@ export default function Chat() {
           return [...prev, created];
         });
         updateConversationActivity(created, { mine: true });
+        refreshConversationsSoon();
         setText("");
         didSend = true;
       }
@@ -1828,6 +1950,7 @@ export default function Chat() {
             return [...prev, createdUpload];
           });
           updateConversationActivity(createdUpload, { mine: true });
+          refreshConversationsSoon();
           didSend = true;
         }
         clearAttachments();
@@ -2148,6 +2271,7 @@ export default function Chat() {
         prev.some((m) => m.id === created.id) ? prev : [...prev, created]
       );
       updateConversationActivity(created, { mine: true });
+      refreshConversationsSoon();
       const audio = recAudioRef.current;
       if (audio) {
         try {
@@ -2318,6 +2442,13 @@ export default function Chat() {
   // Filtered/sorted lists (WhatsApp-like): last activity desc, unread desc, then name
   const [onlyPinned, setOnlyPinned] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
+  const dmGroupIds = useMemo(() => {
+    const set = new Set();
+    (dms || []).forEach((dm) => {
+      if (dm?.groupId) set.add(dm.groupId);
+    });
+    return set;
+  }, [dms]);
   const groupIndexById = useMemo(() => {
     const idx = {};
     (groups || []).forEach((g, i) => {
@@ -2331,26 +2462,13 @@ export default function Chat() {
     let list = q
       ? groups.filter((g) => (g.name || "").toLowerCase().includes(q))
       : groups;
+    // Evita exibir DMs na lista de grupos caso alguma chegue por engano do backend
+    list = list.filter((g) => g?.id && !dmGroupIds.has(g.id));
     if (onlyPinned) list = list.filter((g) => !!pinned?.[g.id]);
     if (onlyUnread)
       list = list.filter((g) => getEffectiveUnread(g._unread || 0, g.id) > 0);
-    return [...list].sort((a, b) => {
-      const pa = pinned?.[a.id] ? 1 : 0;
-      const pb = pinned?.[b.id] ? 1 : 0;
-      if (pa !== pb) return pb - pa; // pinned first
-      const la = conversationOrderTs(a);
-      const lb = conversationOrderTs(b);
-      if (la !== lb) return lb - la;
-      const altA = coerceTimestamp(a?._lastAt);
-      const altB = coerceTimestamp(b?._lastAt);
-      if (altA !== altB) return altB - altA;
-      const ua = getEffectiveUnread(a?._unread || 0, a?.id);
-      const ub = getEffectiveUnread(b?._unread || 0, b?.id);
-      if (ua !== ub) return ub - ua;
-      const ia = groupIndexById[a.id] ?? Number.MAX_SAFE_INTEGER;
-      const ib = groupIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
-      return ia - ib;
-    });
+    // Mantém ordem retornada pelo backend (last_message_at DESC)
+    return [...list];
   }, [
     groups,
     convQuery,
@@ -2425,36 +2543,18 @@ export default function Chat() {
     let list = q
       ? people.filter((p) => (p.name || "").toLowerCase().includes(q))
       : people;
-    if (onlyPinned) {
-      list = list.filter((p) => !!pinned?.[p.id]);
-    }
+    if (onlyPinned) list = list.filter((p) => !!pinned?.[p.id]);
     if (onlyUnread) {
       list = list.filter((p) => {
         const dm = dmByOtherId[p.id];
         return getEffectiveUnread(dm?._unread || 0, dm?.groupId) > 0;
       });
     }
+    // Preserva ordem vinda do backend para DMs (last_message_at DESC)
     return [...list].sort((a, b) => {
-      const pa = pinned?.[a.id] ? 1 : 0;
-      const pb = pinned?.[b.id] ? 1 : 0;
-      if (pa !== pb) return pb - pa; // pinned first
-      const da = dmByOtherId[a.id];
-      const db = dmByOtherId[b.id];
-      const la = conversationOrderTs(da);
-      const lb = conversationOrderTs(db);
-      if (la !== lb) return lb - la;
-      const altA = coerceTimestamp(da?._lastAt);
-      const altB = coerceTimestamp(db?._lastAt);
-      if (altA !== altB) return altB - altA;
-      const ua = getEffectiveUnread(da?._unread || 0, da?.groupId);
-      const ub = getEffectiveUnread(db?._unread || 0, db?.groupId);
-      if (ua !== ub) return ub - ua;
       const orderA = dmOrderByOtherId[a.id] ?? Number.MAX_SAFE_INTEGER;
       const orderB = dmOrderByOtherId[b.id] ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) return orderA - orderB;
-      const ia = peopleIndexById[a.id] ?? Number.MAX_SAFE_INTEGER;
-      const ib = peopleIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
-      return ia - ib;
+      return orderA - orderB;
     });
   }, [
     people,
@@ -2528,6 +2628,71 @@ export default function Chat() {
       {pushError && (
         <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow">
           {pushError}
+        </div>
+      )}
+      {forwardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 shadow-lg">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+              <div>
+                <div className="text-sm text-slate-500 dark:text-slate-400">Encaminhar mensagem</div>
+                <div className="font-medium truncate max-w-[360px]">
+                        {forwardSource?.content || "(vazia)"}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="text-slate-500 hover:text-slate-700 dark:hover:text-white"
+                onClick={() => {
+                  setForwardOpen(false);
+                  setForwardSource(null);
+                  setForwardErr("");
+                  setForwardQuery("");
+                }}
+              >
+                <IconX />
+              </button>
+            </div>
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+              <input
+                type="text"
+                value={forwardQuery}
+                onChange={(e) => setForwardQuery(e.target.value)}
+                placeholder="Buscar conversa ou usuário"
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredForwardDestinations.length ? (
+                      filteredForwardDestinations.map((dest) => (
+                  <button
+                    key={dest.id}
+                    type="button"
+                    className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                    onClick={() => handleForwardTo(dest.id)}
+                    disabled={forwardLoading}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{dest.name}</span>
+                      {!dest.isDM && (
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Grupo
+                        </span>
+                      )}
+                    </div>
+                    {forwardLoading && <span className="text-xs text-slate-500">Enviando...</span>}
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-3 text-sm text-slate-500">Nenhum destino disponível.</div>
+              )}
+            </div>
+            {forwardErr && (
+              <div className="px-4 py-2 text-sm text-red-600 border-t border-red-100 bg-red-50 dark:border-red-800 dark:bg-red-900/30">
+                {forwardErr}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {!isDesktop && showLeftPane && (
@@ -3334,46 +3499,117 @@ export default function Chat() {
                     {menuFor === m.id && (
                       <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded shadow text-sm z-10">
                         <button
-                          className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                          className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
                           onClick={() => {
                             setMenuFor(null);
                             startReply(m);
                           }}
                         >
-                          Responder
+                          <svg
+                            className="w-4 h-4 text-slate-500"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M10 19l-7-7 7-7" />
+                            <path d="M3 12h12a6 6 0 0 1 6 6v1" />
+                          </svg>
+                          <span>Responder</span>
                         </button>
                         {(m.author?.id || m.authorId) === user?.id &&
                           m.type === "text" &&
                           !m.deletedAt && (
                             <button
-                              className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                              className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
                               onClick={() => {
                                 setEditId(m.id);
                                 setEditText(m.content || "");
                                 setMenuFor(null);
                               }}
                             >
-                              Editar
+                              <svg
+                                className="w-4 h-4 text-slate-500"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M12 20h9" />
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                              </svg>
+                              <span>Editar</span>
                             </button>
                           )}
                         <button
-                          className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                          className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
                           onClick={() => {
                             setMenuFor(null);
                             toggleFav(m);
                           }}
                         >
-                          Favoritar
+                          <IconStar
+                            className={`w-4 h-4 ${
+                              isFav(m.id) ? "text-yellow-400" : "text-slate-500"
+                            }`}
+                            filled={isFav(m.id)}
+                          />
+                          <span>Favoritar</span>
                         </button>
+                        {!m.deletedAt && (
+                          <button
+                            className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                            onClick={() => {
+                              setForwardSource(m);
+                              setForwardErr("");
+                              setForwardQuery("");
+                              setForwardOpen(true);
+                              setMenuFor(null);
+                            }}
+                          >
+                            <svg
+                              className="w-4 h-4 text-slate-500"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M4 12h12" />
+                              <path d="M12 6l6 6-6 6" />
+                            </svg>
+                            <span>Encaminhar</span>
+                          </button>
+                        )}
                         {(m.author?.id || m.authorId) === user?.id && (
                           <button
-                            className="block w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50"
+                            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50"
                             onClick={() => {
                               setMenuFor(null);
                               deleteMessage(m);
                             }}
                           >
-                            Apagar
+                            <svg
+                              className="w-4 h-4"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M3 6h18" />
+                              <path d="M8 6V4h8v2" />
+                              <path d="M19 6l-1 14H6L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                            </svg>
+                            <span>Apagar</span>
                           </button>
                         )}
                         {m._count?.replies > 0 && (
@@ -4523,7 +4759,7 @@ function MessageText({
         <textarea
           value={editText}
           onChange={(e) => setEditText(e.target.value)}
-          className="w-full border rounded px-2 py-1 text-sm text-slate-800"
+          className="w-full border rounded px-2 py-1 text-sm text-slate-800 bg-white"
           rows={2}
         />
         <div className="mt-1 flex items-center gap-2">
@@ -4683,8 +4919,3 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     </span>
   );
 }
-
-
-
-
-

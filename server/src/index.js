@@ -81,6 +81,17 @@ app.use(morgan("dev"));
 const uploadDir = process.env.UPLOAD_DIR || "uploads";
 app.use("/" + uploadDir, express.static(uploadDir));
 
+// Evita warning do Chrome ao procurar /.well-known/appspecific/com.chrome.devtools.json
+app.get("/.well-known/appspecific/com.chrome.devtools.json", (req, res) => {
+  // Chrome/Edge tenta esse arquivo por padrão; responder 204 elimina o 404 + CSP noise.
+  res.status(204).end();
+});
+
+// Página raiz simples para não retornar 404 com CSP restritiva
+app.get("/", (req, res) => {
+  res.type("text/plain").send("API online");
+});
+
 // Healthcheck e ping
 app.get("/api/ping", (req, res) => res.json({ ok: true, ts: Date.now() }));
 
@@ -201,4 +212,3 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
-

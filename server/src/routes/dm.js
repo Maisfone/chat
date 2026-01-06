@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
       userA: { select: { id: true, name: true, avatarUrl: true } },
       userB: { select: { id: true, name: true, avatarUrl: true } }
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { group: { lastMessageAt: 'desc' } }
   })
   const data = await Promise.all(threads.map(async (t) => {
     const other = t.userA.id === me ? t.userB : t.userA

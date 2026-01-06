@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
     where: { members: { some: { userId: me } }, directThread: { is: null } },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { lastMessageAt: 'desc' }
   })
   // Anexa contagem de nÃ£o lidas
   const withUnread = await Promise.all(groups.map(async (g) => {
@@ -35,7 +35,7 @@ router.get('/all', adminRequired, async (req, res) => {
   const includeDMs = String(req.query.includeDMs || 'false').toLowerCase() === 'true'
   const groups = await prisma.group.findMany({
     where: includeDMs ? {} : { directThread: { is: null } },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { lastMessageAt: 'desc' }
   })
   res.json(groups)
 })
@@ -147,6 +147,4 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
 })
 
 export default router
-
-
 
