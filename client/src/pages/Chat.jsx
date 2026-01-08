@@ -33,6 +33,10 @@ function formatDuration(seconds) {
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
 }
 
+function isImageType(type) {
+  return type === "image" || type === "gif";
+}
+
 function renderFormattedText(text) {
   if (!text) return null;
   const parts = text.split(/(\*[^*\n]+\*)/g);
@@ -45,6 +49,8 @@ function renderFormattedText(text) {
 }
 
 const MESSAGE_PAGE_SIZE = 50;
+const MAX_CONVERSATION_CACHE = 20;
+const MAX_MESSAGES_CACHE = 500;
 
 export default function Chat() {
   // Lists and active conversation
@@ -457,6 +463,8 @@ export default function Chat() {
   const [historyCursor, setHistoryCursor] = useState(null);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const conversationCacheRef = useRef({});
+  const activeIdRef = useRef(null);
   const scrollToBottom = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
@@ -477,6 +485,10 @@ export default function Chat() {
   const [recPreviewDuration, setRecPreviewDuration] = useState("");
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
+  const [imagePreview, setImagePreview] = useState(null);
+  const closeImagePreview = useCallback(() => {
+    setImagePreview(null);
+  }, []);
 
   // Conversation menu (header)
   const [convMenuOpen, setConvMenuOpen] = useState(false);
@@ -497,6 +509,15 @@ export default function Chat() {
       });
     };
   }, []);
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeImagePreview();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [imagePreview, closeImagePreview]);
 
   function createAttachment(file) {
     return {
@@ -787,10 +808,22 @@ export default function Chat() {
     };
   }, [notifSupported]);
 
+  function isImageContentUrl(value) {
+    const name = fileNameFromUrl(value);
+    return /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(String(name || ""));
+  }
+
+  function isImageMessage(msg) {
+    if (!msg) return false;
+    if (isImageType(msg.type)) return true;
+    if (msg.type === "sticker") return isImageContentUrl(msg.content);
+    return false;
+  }
+
   function previewFromMessage(msg) {
     if (!msg) return "";
     if (msg.type === "text") return msg.content || "";
-    if (msg.type === "image" || msg.type === "gif") return "Imagem";
+    if (isImageMessage(msg)) return "Imagem";
     if (msg.type === "audio") return "Áudio";
     return "Anexo";
   }
@@ -845,7 +878,8 @@ export default function Chat() {
     if (!preview && lastMessage) {
       const type = lastMessage.type || lastMessage.messageType || "text";
       if (type === "text") preview = lastMessage.content || "";
-      else if (type === "image" || type === "gif") preview = "Imagem";
+      else if (isImageType(type) || isImageMessage(lastMessage))
+        preview = "Imagem";
       else if (type === "audio") preview = "Áudio";
       else preview = "Anexo";
       const authorId =
@@ -1247,16 +1281,22 @@ export default function Chat() {
   useEffect(() => {
     const s = ioClient();
     const meId = user?.id;
-    const status = (() => {
+    if (!meId) return;
+    const getStatus = () => {
       try {
         return localStorage.getItem("chat_status") || "online";
       } catch {
         return "online";
       }
-    })();
-    try {
-      s.emit("presence:online", { userId: meId, status });
-    } catch {}
+    };
+    const announce = () => {
+      try {
+        s.emit("presence:online", { userId: meId, status: getStatus() });
+      } catch {}
+      try {
+        s.emit("presence:who");
+      } catch {}
+    };
     const onSnapshot = (payload = {}) => {
       try {
         const map = {};
@@ -1272,13 +1312,13 @@ export default function Chat() {
     };
     s.on("presence:snapshot", onSnapshot);
     s.on("presence:update", onUpdate);
-    try {
-      s.emit("presence:who");
-    } catch {}
+    s.on("connect", announce);
+    announce();
     return () => {
       try {
         s.off("presence:snapshot", onSnapshot);
         s.off("presence:update", onUpdate);
+        s.off("connect", announce);
       } catch {}
     };
   }, [user?.id]);
@@ -1580,7 +1620,7 @@ export default function Chat() {
             let prev = "";
             if (m) {
               if (m.type === "text") prev = m.content || "";
-              else if (m.type === "image" || m.type === "gif") prev = "Imagem";
+              else if (isImageMessage(m)) prev = "Imagem";
               else if (m.type === "audio") prev = "Áudio";
               else prev = "Anexo";
               if (mine) prev = `Você: ${prev}`;
@@ -1754,24 +1794,50 @@ export default function Chat() {
 
   // Load active messages and wire socket listeners
   useEffect(() => {
+    activeIdRef.current = active?.id || null;
+  }, [active?.id]);
+
+  useEffect(() => {
     if (!active) return;
     let unsub = () => {};
     (async () => {
+      const currentId = active.id;
       setHistoryCursor(null);
       setHistoryHasMore(false);
       setHistoryLoading(false);
-      const { items, nextCursor, hasMore } = await fetchMessagesPage(active.id);
-      setMessages(items);
+      const cached = conversationCacheRef.current[currentId];
+      if (cached?.messages?.length) {
+        setMessages(cached.messages);
+        setHistoryCursor(cached.historyCursor || null);
+        setHistoryHasMore(!!cached.historyHasMore);
+      } else {
+        setMessages([]);
+      }
+      const { items, nextCursor, hasMore } = await fetchMessagesPage(currentId);
+      if (activeIdRef.current !== currentId) return;
+      setMessages((prev) => {
+        const existing = Array.isArray(prev) ? prev : [];
+        if (!existing.length) return items;
+        const seen = new Set(existing.map((m) => m.id));
+        const merged = [...existing];
+        items.forEach((m) => {
+          if (!seen.has(m.id)) merged.push(m);
+        });
+        merged.sort(
+          (a, b) => coerceTimestamp(a?.createdAt) - coerceTimestamp(b?.createdAt)
+        );
+        return merged;
+      });
       setHistoryCursor(nextCursor);
       setHistoryHasMore(hasMore);
       try {
-        await api.post(`/messages/${active.id}/read`, {});
+        await api.post(`/messages/${currentId}/read`, {});
       } catch {}
       setGroups((prev) =>
-        prev.map((g) => (g.id === active.id ? { ...g, _unread: 0 } : g))
+        prev.map((g) => (g.id === currentId ? { ...g, _unread: 0 } : g))
       );
       setDms((prev) =>
-        prev.map((d) => (d.groupId === active.id ? { ...d, _unread: 0 } : d))
+        prev.map((d) => (d.groupId === currentId ? { ...d, _unread: 0 } : d))
       );
 
       const s = ioClient();
@@ -1781,11 +1847,11 @@ export default function Chat() {
       try {
         s.off("message:deleted");
       } catch {}
-      s.emit("group:join", active.id);
+      s.emit("group:join", currentId);
 
       const onNew = (msg) => {
         const mine = (msg.author?.id || msg.authorId) === user?.id;
-        const isActive = msg.groupId === active.id;
+        const isActive = msg.groupId === currentId;
         const isMuted =
           !!muted?.[msg.groupId] ||
           (dmOtherByGroupId[msg.groupId]
@@ -1802,7 +1868,7 @@ export default function Chat() {
         // mark as read immediately so the sender sees the read status in realtime
         if (isActive && !mine) {
           try {
-            api.post(`/messages/${active.id}/read`, {});
+            api.post(`/messages/${currentId}/read`, {});
           } catch {}
         }
         if (shouldNotify) {
@@ -1835,13 +1901,13 @@ export default function Chat() {
         } catch {}
       };
       const onUpdated = (msg) => {
-        if (msg?.groupId === active.id) {
+        if (msg?.groupId === currentId) {
           setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
         }
       };
       const onReads = (payload) => {
         try {
-          if (!payload || payload.groupId !== active.id) return;
+          if (!payload || payload.groupId !== currentId) return;
           const ids = Array.isArray(payload.ids) ? payload.ids : [];
           const uid = payload.userId;
           if (!uid || !ids.length) return;
@@ -1860,7 +1926,7 @@ export default function Chat() {
         } catch {}
       };
       const onDeleted = (payload) => {
-        if (payload.groupId === active.id)
+        if (payload.groupId === currentId)
           setMessages((prev) =>
             prev.map((m) =>
               m.id === payload.id ? { ...m, deletedAt: payload.deletedAt } : m
@@ -1877,7 +1943,7 @@ export default function Chat() {
         s.off("message:updated", onUpdated);
         s.off("messages:read", onReads);
         s.off("message:deleted", onDeleted);
-        s.emit("group:leave", active.id);
+        s.emit("group:leave", currentId);
       };
     })();
     return () => unsub();
@@ -1895,6 +1961,32 @@ export default function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, active?.id, scrollToBottom]);
+
+  useEffect(() => {
+    if (!active?.id) return;
+    const cache = conversationCacheRef.current;
+    const trimmed = Array.isArray(messages)
+      ? messages.slice(-MAX_MESSAGES_CACHE)
+      : [];
+    cache[active.id] = {
+      messages: trimmed,
+      historyCursor,
+      historyHasMore,
+      updatedAt: Date.now(),
+    };
+    const keys = Object.keys(cache);
+    if (keys.length > MAX_CONVERSATION_CACHE) {
+      keys
+        .sort(
+          (a, b) =>
+            (cache[a]?.updatedAt || 0) - (cache[b]?.updatedAt || 0)
+        )
+        .slice(0, keys.length - MAX_CONVERSATION_CACHE)
+        .forEach((key) => {
+          delete cache[key];
+        });
+    }
+  }, [messages, active?.id, historyCursor, historyHasMore]);
 
   const [sending, setSending] = useState(false);
 
@@ -2593,7 +2685,7 @@ export default function Chat() {
             let prev = "";
             if (m) {
               if (m.type === "text") prev = m.content || "";
-              else if (m.type === "image" || m.type === "gif") prev = "Imagem";
+              else if (isImageMessage(m)) prev = "Imagem";
               else if (m.type === "audio") prev = "Áudio";
               else prev = "Anexo";
               if (mine) prev = `Você: ${prev}`;
@@ -2692,6 +2784,31 @@ export default function Chat() {
                 {forwardErr}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {imagePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+          onClick={closeImagePreview}
+        >
+          <div
+            className="relative max-h-[90vh] max-w-[92vw] rounded-lg bg-white p-2 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={closeImagePreview}
+              className="absolute right-2 top-2 rounded-full bg-white/90 p-1 text-slate-700 shadow hover:bg-white"
+              aria-label="Fechar imagem"
+            >
+              <IconX />
+            </button>
+            <img
+              src={imagePreview.url}
+              alt={imagePreview.name || "imagem"}
+              className="max-h-[86vh] max-w-[88vw] rounded object-contain bg-slate-100"
+            />
           </div>
         </div>
       )}
@@ -3344,7 +3461,7 @@ export default function Chat() {
                         <div className="truncate opacity-90">
                           {m.replyTo.type === "text"
                             ? m.replyTo.content
-                            : m.replyTo.type === "image"
+                            : isImageMessage(m.replyTo)
                             ? "Imagem"
                             : m.replyTo.type === "audio"
                             ? "Áudio"
@@ -3386,25 +3503,30 @@ export default function Chat() {
                         editText={editText}
                         setEditText={setEditText}
                       />
-                    ) : m.type === "image" || m.type === "gif" ? (
+                    ) : isImageMessage(m) ? (
                       (() => {
                         const imageUrl = absUrl(m.content);
                         const imageName =
                           fileNameFromUrl(m.content) || "imagem";
                         return (
                           <div className="flex flex-col gap-2 items-start">
-                            <a
-                              href={imageUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImagePreview({
+                                  url: imageUrl,
+                                  name: imageName,
+                                })
+                              }
                               className="inline-block max-w-[220px]"
+                              aria-label="Abrir imagem"
                             >
                               <img
                                 src={imageUrl}
                                 alt={imageName}
                                 className="max-w-full max-h-60 rounded shadow-sm object-contain bg-slate-100"
                               />
-                            </a>
+                            </button>
                             <button
                               type="button"
                               onClick={() =>
@@ -3643,7 +3765,7 @@ export default function Chat() {
               <div className="truncate">
                 {replyTo.type === "text"
                   ? replyTo.content
-                  : replyTo.type === "image"
+                  : isImageMessage(replyTo)
                   ? "Imagem"
                   : replyTo.type === "audio"
                   ? "Áudio"
@@ -4636,7 +4758,7 @@ export default function Chat() {
                         >
                           <div className="min-w-0">
                             <div className="font-medium truncate">
-                              {m.type === "image" || m.type === "gif"
+                              {isImageMessage(m)
                                 ? "Imagem"
                                 : m.type === "audio"
                                 ? "Áudio"
@@ -4661,14 +4783,29 @@ export default function Chat() {
                                 }
                               )}
                             </span>
-                            <a
-                              className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
-                              href={absUrl(m.content)}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Abrir
-                            </a>
+                            {isImageMessage(m) ? (
+                              <button
+                                type="button"
+                                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                                onClick={() =>
+                                  setImagePreview({
+                                    url: absUrl(m.content),
+                                    name: fileNameFromUrl(m.content) || "imagem",
+                                  })
+                                }
+                              >
+                                Abrir
+                              </button>
+                            ) : (
+                              <a
+                                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                                href={absUrl(m.content)}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Abrir
+                              </a>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -4703,7 +4840,7 @@ export default function Chat() {
                         <div className="mt-1">
                           {m.type === "text"
                             ? m.content
-                            : m.type === "image" || m.type === "gif"
+                            : isImageMessage(m)
                             ? "Imagem"
                             : m.type === "audio"
                             ? "Áudio"
