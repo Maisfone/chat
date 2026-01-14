@@ -25,7 +25,17 @@ router.get('/', async (req, res) => {
         reads: { none: { userId: me } }
       }
     })
-    return { ...g, _unread: unread }
+    const mentions = await prisma.messageMention.count({
+      where: {
+        userId: me,
+        message: {
+          groupId: g.id,
+          deletedAt: null,
+          reads: { none: { userId: me } }
+        }
+      }
+    })
+    return { ...g, _unread: unread, _mentions: mentions }
   }))
   res.json(withUnread)
 })
@@ -133,6 +143,7 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
       const msgs = await tx.message.findMany({ where: { groupId }, select: { id: true } })
       const ids = msgs.map(m => m.id)
       if (ids.length) {
+        await tx.messageMention.deleteMany({ where: { messageId: { in: ids } } })
         await tx.messageRead.deleteMany({ where: { messageId: { in: ids } } })
         await tx.message.deleteMany({ where: { id: { in: ids } } })
       }
@@ -147,4 +158,3 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
 })
 
 export default router
-

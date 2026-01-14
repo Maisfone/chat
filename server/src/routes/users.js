@@ -168,15 +168,79 @@ router.post('/:id/password', adminRequired, async (req, res) => {
 })
 
 // Excluir usuário (simples)
-router.delete('/:id', adminRequired, async (req, res) => {
+// Remove group data and messages before deleting the user to keep referential integrity.
+async function deleteGroupAndDependencies(tx, groupId) {
+  const messages = await tx.message.findMany({ where: { groupId }, select: { id: true } })
+  const messageIds = messages.map((m) => m.id)
+  if (messageIds.length) {
+    await tx.messageMention.deleteMany({ where: { messageId: { in: messageIds } } })
+    await tx.messageRead.deleteMany({ where: { messageId: { in: messageIds } } })
+    await tx.messageFavorite.deleteMany({ where: { messageId: { in: messageIds } } })
+    await tx.message.deleteMany({ where: { id: { in: messageIds } } })
+  }
+  await tx.groupMember.deleteMany({ where: { groupId } })
+  await tx.directThread.deleteMany({ where: { groupId } })
   try {
-    await prisma.user.delete({ where: { id: req.params.id } })
-    try { req.io?.emit('user:deleted', { id: req.params.id }) } catch {}
+    await tx.group.delete({ where: { id: groupId } })
+  } catch (err) {
+    if (err?.code !== 'P2025') throw err
+  }
+}
+
+// Remove message metadata before deleting the user's authored content.
+async function deleteMessagesByAuthor(tx, authorId) {
+  const messages = await tx.message.findMany({ where: { authorId }, select: { id: true } })
+  const messageIds = messages.map((m) => m.id)
+  if (!messageIds.length) return
+  await tx.messageMention.deleteMany({ where: { messageId: { in: messageIds } } })
+  await tx.messageRead.deleteMany({ where: { messageId: { in: messageIds } } })
+  await tx.messageFavorite.deleteMany({ where: { messageId: { in: messageIds } } })
+  await tx.message.deleteMany({ where: { id: { in: messageIds } } })
+}
+
+router.delete('/:id', adminRequired, async (req, res) => {
+  const { id } = req.params
+  const user = await prisma.user.findUnique({ where: { id } })
+  if (!user) return res.status(404).json({ error: 'Usuário não encontrado' })
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const dmGroups = await tx.directThread.findMany({
+        where: { OR: [{ userAId: id }, { userBId: id }] },
+        select: { groupId: true }
+      })
+      const groupIds = Array.from(new Set(dmGroups.map((d) => d.groupId)))
+      for (const groupId of groupIds) {
+        await deleteGroupAndDependencies(tx, groupId)
+      }
+
+      await tx.messageFavorite.deleteMany({ where: { userId: id } })
+      await tx.messageMention.deleteMany({ where: { userId: id } })
+      await tx.messageRead.deleteMany({ where: { userId: id } })
+
+      await deleteMessagesByAuthor(tx, id)
+
+      await tx.groupMember.deleteMany({ where: { userId: id } })
+
+      const meetings = await tx.meeting.findMany({ where: { hostId: id }, select: { id: true } })
+      const meetingIds = meetings.map((m) => m.id)
+      if (meetingIds.length) {
+        await tx.meetingParticipant.deleteMany({ where: { meetingId: { in: meetingIds } } })
+        await tx.meeting.deleteMany({ where: { id: { in: meetingIds } } })
+      }
+
+      await tx.directThread.deleteMany({ where: { OR: [{ userAId: id }, { userBId: id }] } })
+      await tx.sipAccount.deleteMany({ where: { userId: id } })
+
+      await tx.user.delete({ where: { id } })
+    })
+
+    try { req.io?.emit('user:deleted', { id }) } catch {}
     res.status(204).send()
   } catch (e) {
+    console.error('Falha ao excluir usuário', e)
     res.status(400).json({ error: 'Falha ao excluir usuário' })
   }
 })
 
 export default router
-

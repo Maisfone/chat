@@ -85,3 +85,41 @@ export function IconEyeOff({ className = "w-5 h-5" }) {
     </svg>
   );
 }
+
+export function IconPin({ className = "w-4 h-4" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M11 3h2v7l2 2-5 5v3h-2v-3l-5-5 3-3 2 2V3z" />
+    </svg>
+  );
+}
+
+export function IconBellSlash({ className = "w-4 h-4" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0 1 18 14.158V11a6 6 0 0 0-4.775-5.891" />
+      <path d="M9.399 4.6A6.022 6.022 0 0 0 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h6" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      <path d="M3 3l18 18" />
+    </svg>
+  );
+}
+
+export function IconInbox({ className = "w-4 h-4" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 6h18v12H3z" />
+      <path d="M7 6l3 6h4l3-6" />
+      <path d="M9 16h6" />
+    </svg>
+  );
+}
+
+export function IconCheckCircle({ className = "w-4 h-4" }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 12.5l1.5 1.5 3.5-3.5" />
+    </svg>
+  );
+}

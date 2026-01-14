@@ -25,6 +25,7 @@ model User {
   messages   Message[]
   memberships GroupMember[]
   reads      MessageRead[]
+  mentions   MessageMention[]
 
   // Back-relations para DMs
   directThreadsA DirectThread[] @relation("DirectUserA")
@@ -91,6 +92,7 @@ model Message {
   deletedAt  DateTime?   @map("deleted_at")
 
   reads      MessageRead[]
+  mentions   MessageMention[]
 
   // Reply-to self relation
   replyTo    Message?    @relation("MessageReply", fields: [replyToId], references: [id])
@@ -101,6 +103,19 @@ model Message {
   favorites  MessageFavorite[]
 
   @@index([groupId, createdAt])
+}
+
+model MessageMention {
+  id         String   @id @default(uuid())
+  message    Message  @relation(fields: [messageId], references: [id])
+  messageId  String   @map("message_id")
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String   @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@index([messageId])
 }
 
 model MessageRead {

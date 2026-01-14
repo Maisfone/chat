@@ -8,6 +8,49 @@ import { sendToUsers } from '../lib/push.js'
 const router = express.Router()
 router.use(authRequired)
 
+function normalizeMentionText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+function extractMentionTokens(content) {
+  if (!content) return []
+  const tokens = new Set()
+  const re = /@([^\s@]{1,32})/g
+  let match
+  while ((match = re.exec(content))) {
+    const raw = match[1] || ''
+    const cleaned = raw.replace(/[.,!?;:]+$/g, '')
+    const normalized = normalizeMentionText(cleaned)
+    if (normalized) tokens.add(normalized)
+  }
+  return Array.from(tokens)
+}
+
+async function resolveMentionUserIds({ groupId, authorId, content }) {
+  const tokens = extractMentionTokens(content)
+  if (!tokens.length) return []
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    include: { user: { select: { id: true, name: true } } }
+  })
+  const ids = new Set()
+  for (const m of members) {
+    const nameNorm = normalizeMentionText(m.user?.name || '')
+    if (!nameNorm) continue
+    const parts = nameNorm.split(/\s+/).filter(Boolean)
+    for (const token of tokens) {
+      if (nameNorm.startsWith(token) || parts.some(p => p.startsWith(token))) {
+        if (m.user?.id && m.user.id !== authorId) ids.add(m.user.id)
+      }
+    }
+  }
+  return Array.from(ids)
+}
+
 // Upload de arquivo (local ou S3)
 const upload = handleUploadSingle('file')
 
@@ -46,6 +89,7 @@ router.get('/:groupId', async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: {
       author: { select: { id: true, name: true, avatarUrl: true } },
+      mentions: { select: { userId: true } },
       replyTo: {
         select: {
           id: true,
@@ -74,6 +118,9 @@ router.post('/:groupId', async (req, res) => {
     // valida se usuário é membro do grupo
     const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
     if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+    const mentionIds = type === 'text'
+      ? await resolveMentionUserIds({ groupId, authorId: req.user.id, content })
+      : []
     const msg = await prisma.$transaction(async (tx) => {
       const created = await tx.message.create({
         data: { groupId, authorId: req.user.id, type, content, replyToId: replyToId || null },
@@ -82,16 +129,55 @@ router.post('/:groupId', async (req, res) => {
           replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
         }
       })
+      if (mentionIds.length) {
+        await tx.messageMention.createMany({
+          data: mentionIds.map(userId => ({ messageId: created.id, userId })),
+          skipDuplicates: true
+        })
+      }
       await tx.group.update({ where: { id: groupId }, data: { lastMessageAt: created.createdAt } })
-      return created
+      const full = await tx.message.findUnique({
+        where: { id: created.id },
+        include: {
+          author: { select: { id: true, name: true, avatarUrl: true } },
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+          mentions: { select: { userId: true } }
+        }
+      })
+      return full || created
     })
     req.io.to(groupId).emit('message:new', msg)
-    // Push para membros (exclui autor)
-    try {
-      const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
-      const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
-      await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body: msg.type==='text'? msg.content : (msg.type==='image'?'Imagem': msg.type==='audio'?'Áudio':'Anexo'), tag: `group:${groupId}`, data: { groupId } })
-    } catch {}
+    const pushNotifications = async () => {
+      try {
+        const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
+        const targets = members.map((m) => m.userId).filter((id) => id !== req.user.id)
+        const preview = msg.type === 'text'
+          ? msg.content
+          : (msg.type === 'image' ? 'Imagem' : msg.type === 'audio' ? 'Áudio' : 'Anexo')
+        const mentionSet = new Set(mentionIds || [])
+        const mentionTargets = targets.filter((id) => mentionSet.has(id))
+        const otherTargets = targets.filter((id) => !mentionSet.has(id))
+        if (mentionTargets.length) {
+          await sendToUsers(mentionTargets, {
+            title: msg.author?.name || 'Mensagem',
+            body: 'Você foi mencionado',
+            tag: `group:${groupId}:mention`,
+            data: { groupId, mention: true }
+          })
+        }
+        if (otherTargets.length) {
+          await sendToUsers(otherTargets, {
+            title: msg.author?.name || 'Mensagem',
+            body: preview,
+            tag: `group:${groupId}`,
+            data: { groupId }
+          })
+        }
+      } catch (error) {
+        console.error('Push notification error', error)
+      }
+    }
+    void pushNotifications()
     res.status(201).json(msg)
   } catch (e) {
     res.status(400).json({ error: 'Dados inválidos' })
@@ -128,15 +214,33 @@ router.post('/:groupId/upload', upload, async (req, res) => {
       }
     })
     await tx.group.update({ where: { id: groupId }, data: { lastMessageAt: created.createdAt } })
-    return created
+    const full = await tx.message.findUnique({
+      where: { id: created.id },
+      include: {
+        author: { select: { id: true, name: true, avatarUrl: true } },
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+        mentions: { select: { userId: true } }
+      }
+    })
+    return full || created
   })
   req.io.to(groupId).emit('message:new', msg)
-  try {
-    const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
-    const targets = members.map(m => m.userId).filter(id => id !== req.user.id)
-    const body = kind==='image' ? 'Imagem' : (kind==='audio' ? 'Áudio' : 'Anexo')
-    await sendToUsers(targets, { title: msg.author?.name || 'Mensagem', body, tag: `group:${groupId}`, data: { groupId } })
-  } catch {}
+  const pushNotifications = async () => {
+    try {
+      const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
+      const targets = members.map((m) => m.userId).filter((id) => id !== req.user.id)
+      const body = kind === 'image' ? 'Imagem' : (kind === 'audio' ? 'Áudio' : 'Anexo')
+      await sendToUsers(targets, {
+        title: msg.author?.name || 'Mensagem',
+        body,
+        tag: `group:${groupId}`,
+        data: { groupId }
+      })
+    } catch (error) {
+      console.error('Push notification error', error)
+    }
+  }
+  void pushNotifications()
   res.status(201).json(msg)
 })
 
@@ -170,13 +274,36 @@ router.patch('/:messageId', async (req, res) => {
     const isAdmin = !!req.user?.isAdmin
     if (!isAdmin && msg.authorId !== req.user.id) return res.status(403).json({ error: 'Sem permissão' })
     if (msg.type !== 'text') return res.status(400).json({ error: 'Apenas mensagens de texto podem ser editadas' })
-    const updated = await prisma.message.update({
-      where: { id: messageId },
-      data: { content, editedAt: new Date() },
-      include: {
-        author: { select: { id: true, name: true, avatarUrl: true } },
-        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+    const mentionIds = await resolveMentionUserIds({
+      groupId: msg.groupId,
+      authorId: msg.authorId,
+      content
+    })
+    const updated = await prisma.$transaction(async (tx) => {
+      const next = await tx.message.update({
+        where: { id: messageId },
+        data: { content, editedAt: new Date() },
+        include: {
+          author: { select: { id: true, name: true, avatarUrl: true } },
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+        }
+      })
+      await tx.messageMention.deleteMany({ where: { messageId } })
+      if (mentionIds.length) {
+        await tx.messageMention.createMany({
+          data: mentionIds.map(userId => ({ messageId, userId })),
+          skipDuplicates: true
+        })
       }
+      const full = await tx.message.findUnique({
+        where: { id: messageId },
+        include: {
+          author: { select: { id: true, name: true, avatarUrl: true } },
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+          mentions: { select: { userId: true } }
+        }
+      })
+      return full || next
     })
     try { req.io.to(updated.groupId).emit('message:updated', updated) } catch {}
     res.json(updated)

@@ -15,11 +15,16 @@ import {
   IconEllipsis,
   IconEmoji,
   IconStar,
+  IconPin,
+  IconBellSlash,
+  IconInbox,
+  IconCheckCircle,
 } from "../components/Icon.jsx";
 import { ioClient } from "../services/socket.js";
 import { getUser, getToken } from "../state/auth.js";
 import { ensurePushSubscription } from "../services/pushClient.js";
 import { EMOJI_CATS, EMOJI_TABS } from "../constants/emojiData.js";
+import { useDarkTheme } from "../hooks/useDarkTheme.js";
 
 function toArray(value) {
   return Array.isArray(value) ? value : [];
@@ -37,14 +42,55 @@ function isImageType(type) {
   return type === "image" || type === "gif";
 }
 
+function normalizeMentionText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function renderMentionsSegment(text, keyPrefix) {
+  const parts = String(text || "").split(/(@[^\s@]+)/g);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part.startsWith("@")) {
+      const match = /^@([^\s@]+)([.,!?;:]*)$/.exec(part);
+      if (match) {
+        const mention = `@${match[1]}`;
+        const suffix = match[2] || "";
+        return (
+          <React.Fragment key={`${keyPrefix}-${idx}`}>
+            <span className="rounded bg-blue-100 px-1 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200">
+              {mention}
+            </span>
+            {suffix}
+          </React.Fragment>
+        );
+      }
+      return (
+        <span
+          key={`${keyPrefix}-${idx}`}
+          className="rounded bg-blue-100 px-1 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200"
+        >
+          {part}
+        </span>
+      );
+    }
+    return (
+      <React.Fragment key={`${keyPrefix}-${idx}`}>{part}</React.Fragment>
+    );
+  });
+}
+
 function renderFormattedText(text) {
   if (!text) return null;
   const parts = text.split(/(\*[^*\n]+\*)/g);
-  return parts.map((part, index) => {
+  return parts.flatMap((part, index) => {
     if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
       return <strong key={index}>{part.slice(1, -1)}</strong>;
     }
-    return <React.Fragment key={index}>{part}</React.Fragment>;
+    return renderMentionsSegment(part, `m-${index}`);
   });
 }
 
@@ -183,6 +229,33 @@ export default function Chat() {
   const [menuFor, setMenuFor] = useState(null);
   const manualUnreadMarker = active?.id ? manualUnread?.[active.id] : null;
   const messageMenuContainerRef = useRef(null);
+  const isChatDark = useDarkTheme();
+  const messageMenuPanelClass = isChatDark
+    ? "bg-white/95 border-slate-200 text-slate-900 shadow-lg"
+    : "bg-white border-slate-200 text-slate-900";
+  const messageMenuButtonClass = "text-slate-700 hover:bg-slate-50";
+  const messageMenuIconClass = "text-slate-500";
+  const sideMenuPanelClass = isChatDark
+    ? "bg-slate-950 border-slate-800 text-slate-100"
+    : "bg-white border-slate-200 text-slate-900";
+  const sideMenuButtonClass = isChatDark
+    ? "text-slate-100 hover:bg-slate-800/60"
+    : "text-slate-700 hover:bg-slate-50";
+  const sideMenuIconClass = isChatDark ? "text-slate-300" : "text-slate-500";
+  const leftPaneTheme = isChatDark
+    ? "bg-slate-950/90 text-slate-100 border-slate-800"
+    : "bg-white text-slate-900 border-slate-200";
+  const rightPanelHeaderClass =
+    "border-slate-200 text-slate-900 dark:border-slate-800 dark:text-slate-100";
+  const rightPanelTabInactive = isChatDark
+    ? "text-slate-300 hover:text-white"
+    : "text-slate-600 hover:text-slate-800";
+  const rightPanelTabActive = isChatDark
+    ? "border-b-2 border-blue-400 text-blue-300"
+    : "border-b-2 border-blue-600 text-blue-700";
+  const rightPanelBtnBorder = isChatDark
+    ? "border-slate-700 text-slate-200 hover:bg-slate-900/40"
+    : "border-slate-300 text-slate-700 hover:bg-slate-50";
   const setMessageMenuContainer = useCallback((node) => {
     messageMenuContainerRef.current = node;
   }, []);
@@ -460,6 +533,12 @@ export default function Chat() {
   const fileInputRef = useRef(null);
   const listRef = useRef(null);
   const skipAutoScrollRef = useRef(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionPosition, setMentionPosition] = useState(null);
+  const mentionRangeRef = useRef(null);
+  const mentionMembersCacheRef = useRef({});
   const [historyCursor, setHistoryCursor] = useState(null);
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -820,6 +899,94 @@ export default function Chat() {
     return false;
   }
 
+  function isMentionForMe(msg) {
+    const uid = user?.id;
+    if (!uid) return false;
+    if (!msg || !Array.isArray(msg.mentions)) return false;
+    return msg.mentions.some((m) => m?.userId === uid);
+  }
+
+  const updateMentionState = useCallback((value, caret) => {
+    if (caret === null || caret === undefined) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      mentionRangeRef.current = null;
+      setMentionPosition(null);
+      return;
+    }
+    const before = String(value || "").slice(0, caret);
+    const at = before.lastIndexOf("@");
+    if (at < 0) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      mentionRangeRef.current = null;
+      setMentionPosition(null);
+      return;
+    }
+    if (at > 0 && !/\s/.test(before[at - 1])) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      mentionRangeRef.current = null;
+      setMentionPosition(null);
+      return;
+    }
+    const after = before.slice(at + 1);
+    if (/\s/.test(after) || after.length > 32) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      mentionRangeRef.current = null;
+      setMentionPosition(null);
+      return;
+    }
+    mentionRangeRef.current = { start: at, caret };
+    setMentionQuery(after);
+    setMentionIndex(0);
+    setMentionOpen(true);
+    try {
+      const inputEl = inputRef.current;
+      const composerEl = composerRef.current;
+      if (inputEl && composerEl) {
+        const inputRect = inputEl.getBoundingClientRect();
+        const composerRect = composerEl.getBoundingClientRect();
+        const left = Math.max(0, inputRect.left - composerRect.left);
+        const width = Math.max(180, inputRect.width);
+        setMentionPosition({ left, width });
+      }
+    } catch {}
+  }, []);
+
+  const applyMention = useCallback(
+    (member) => {
+      const m = member?.user || member;
+      const name = m?.name || "";
+      if (!name) return;
+      const range = mentionRangeRef.current;
+      const el = inputRef.current;
+      const caret =
+        el && typeof el.selectionStart === "number"
+          ? el.selectionStart
+          : range?.caret;
+      if (!range || caret === null || caret === undefined) return;
+      const before = String(text || "").slice(0, range.start);
+      const after = String(text || "").slice(caret);
+      const next = `${before}@${name} ${after}`;
+      setText(next);
+      setMentionOpen(false);
+      setMentionQuery("");
+      mentionRangeRef.current = null;
+      setMentionPosition(null);
+      requestAnimationFrame(() => {
+        if (!el) return;
+        const pos = before.length + name.length + 2;
+        try {
+          el.focus();
+          el.setSelectionRange(pos, pos);
+        } catch {}
+      });
+    },
+    [text]
+  );
+
   function previewFromMessage(msg) {
     if (!msg) return "";
     if (msg.type === "text") return msg.content || "";
@@ -945,6 +1112,7 @@ export default function Chat() {
     let preview = previewFromMessage(msg);
     if (mine && preview) preview = `Você: ${preview}`;
     const isActive = active?.id === msg.groupId;
+    const mentioned = !mine && isMentionForMe(msg);
 
     setGroups((prev) =>
       (prev || []).map((g) => {
@@ -956,8 +1124,14 @@ export default function Chat() {
           _lastPreview: preview,
           _lastReceivedAt: !mine ? ts : prevReceived,
         };
-        if (isActive) next._unread = 0;
+        if (isActive) {
+          next._unread = 0;
+          next._mentions = 0;
+        }
         else if (!mine) next._unread = (g._unread || 0) + 1;
+        if (!isActive && mentioned) {
+          next._mentions = (g._mentions || 0) + 1;
+        }
         return next;
       })
     );
@@ -1135,6 +1309,7 @@ export default function Chat() {
   const [contactErr, setContactErr] = useState("");
   // Group profile state
   const [groupMembers, setGroupMembers] = useState([]);
+  const [mentionMembers, setMentionMembers] = useState([]);
   const [groupLoading, setGroupLoading] = useState(false);
   const [groupErr, setGroupErr] = useState("");
   const [rightTab, setRightTab] = useState("perfil"); // 'perfil' | 'arquivos' | 'favoritos'
@@ -1150,6 +1325,17 @@ export default function Chat() {
   const [rightFavItems, setRightFavItems] = useState([]); // favoritos carregados (mensagens)
   // Favorites (local)
   const [favorites, setFavorites] = useState({}); // { [groupId]: { [messageId]: true } }
+  const mentionSuggestions = useMemo(() => {
+    if (!mentionOpen) return [];
+    const q = normalizeMentionText(mentionQuery);
+    const list = (mentionMembers || []).map((m) => m.user || m);
+    const filtered = q
+      ? list.filter((m) =>
+          normalizeMentionText(m?.name || "").includes(q)
+        )
+      : list;
+    return filtered.slice(0, 8);
+  }, [mentionOpen, mentionQuery, mentionMembers]);
   function isFav(msgId) {
     return !!favorites?.[active?.id || ""]?.[msgId];
   }
@@ -1161,13 +1347,8 @@ export default function Chat() {
       return true;
     }
   });
-  const [showLeftPane, setShowLeftPane] = useState(() => {
-    try {
-      return typeof window === "undefined" ? true : window.innerWidth >= 1024;
-    } catch {
-      return true;
-    }
-  });
+  const [showLeftPane, setShowLeftPane] = useState(false);
+  const [searchBarOpen, setSearchBarOpen] = useState(false);
   const hideLeftIfMobile = useCallback(() => {
     try {
       if (typeof window !== "undefined" && window.innerWidth < 1024) {
@@ -1181,9 +1362,6 @@ export default function Chat() {
       try {
         const wide = window.innerWidth >= 1024;
         setIsDesktop(wide);
-        if (wide) {
-          setShowLeftPane(true);
-        }
       } catch {}
     };
     handleResize();
@@ -1276,6 +1454,17 @@ export default function Chat() {
     })();
   }, [active?.id, muted, dmOtherByGroupId]);
   const searchInputRef = useRef(null);
+  const handleOpenChatList = useCallback(() => {
+    try {
+      setShowLeftPane((prev) => {
+        const next = !prev;
+        if (next && searchInputRef.current) {
+          searchInputRef.current.focus();
+        }
+        return next;
+      });
+    } catch {}
+  }, [searchInputRef]);
   // Presence map: { [userId]: status }
   const [presence, setPresence] = useState({});
   useEffect(() => {
@@ -1834,7 +2023,9 @@ export default function Chat() {
         await api.post(`/messages/${currentId}/read`, {});
       } catch {}
       setGroups((prev) =>
-        prev.map((g) => (g.id === currentId ? { ...g, _unread: 0 } : g))
+        prev.map((g) =>
+          g.id === currentId ? { ...g, _unread: 0, _mentions: 0 } : g
+        )
       );
       setDms((prev) =>
         prev.map((d) => (d.groupId === currentId ? { ...d, _unread: 0 } : d))
@@ -2020,6 +2211,9 @@ export default function Chat() {
         updateConversationActivity(created, { mine: true });
         refreshConversationsSoon();
         setText("");
+        setMentionOpen(false);
+        setMentionQuery("");
+        mentionRangeRef.current = null;
         didSend = true;
       }
       if (hasFiles) {
@@ -2560,7 +2754,14 @@ export default function Chat() {
     if (onlyUnread)
       list = list.filter((g) => getEffectiveUnread(g._unread || 0, g.id) > 0);
     // Mantém ordem retornada pelo backend (last_message_at DESC)
-    return [...list];
+    return [...list].sort((a, b) => {
+      const pinnedA = !!pinned?.[a.id];
+      const pinnedB = !!pinned?.[b.id];
+      if (pinnedA !== pinnedB) return pinnedA ? -1 : 1;
+      const orderA = groupIndexById[a.id] ?? Number.MAX_SAFE_INTEGER;
+      const orderB = groupIndexById[b.id] ?? Number.MAX_SAFE_INTEGER;
+      return orderA - orderB;
+    });
   }, [
     groups,
     convQuery,
@@ -2604,6 +2805,31 @@ export default function Chat() {
     if (!gid) return false;
     return (dms || []).some((d) => d.groupId === gid);
   }, [active?.id, dms]);
+
+  useEffect(() => {
+    const gid = active?.id;
+    if (!gid || activeIsDM) {
+      setMentionMembers([]);
+      return;
+    }
+    const cached = mentionMembersCacheRef.current[gid];
+    if (cached) {
+      setMentionMembers(cached);
+      return;
+    }
+    (async () => {
+      try {
+        const list = await api.get(`/groups/${gid}/participants`);
+        const members = Array.isArray(list)
+          ? list.map((m) => m.user || m).filter(Boolean)
+          : [];
+        mentionMembersCacheRef.current[gid] = members;
+        setMentionMembers(members);
+      } catch {
+        setMentionMembers([]);
+      }
+    })();
+  }, [active?.id, activeIsDM]);
   const activePinKey = useMemo(() => {
     if (!active?.id) return null;
     return activeIsDM ? dmOtherId || otherUserId || null : active.id;
@@ -2644,6 +2870,9 @@ export default function Chat() {
     }
     // Preserva ordem vinda do backend para DMs (last_message_at DESC)
     return [...list].sort((a, b) => {
+      const pinnedA = !!pinned?.[a.id];
+      const pinnedB = !!pinned?.[b.id];
+      if (pinnedA !== pinnedB) return pinnedA ? -1 : 1;
       const orderA = dmOrderByOtherId[a.id] ?? Number.MAX_SAFE_INTEGER;
       const orderB = dmOrderByOtherId[b.id] ?? Number.MAX_SAFE_INTEGER;
       return orderA - orderB;
@@ -2783,9 +3012,9 @@ export default function Chat() {
               <div className="px-4 py-2 text-sm text-red-600 border-t border-red-100 bg-red-50 dark:border-red-800 dark:bg-red-900/30">
                 {forwardErr}
               </div>
-            )}
-          </div>
-        </div>
+        )}
+      </div>
+    </div>
       )}
       {imagePreview && (
         <div
@@ -2820,21 +3049,30 @@ export default function Chat() {
           onClick={() => setShowLeftPane(false)}
         />
       )}
-      <aside
-        id="chat-left-pane"
-        ref={leftPaneRef}
-        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-slate-200 bg-white dark:bg-slate-900/70 overflow-y-auto transition-transform duration-200 ease-out ${
+      <div className="flex flex-1 min-h-full min-w-0">
+        <aside
+          id="chat-left-pane"
+          ref={leftPaneRef}
+        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r ${leftPaneTheme} overflow-y-auto transition-transform duration-200 ease-out ${
           isDesktop ? "" : "fixed inset-y-0 left-0 z-40 shadow-xl"
         } ${
           showLeftPane ? "translate-x-0" : "-translate-x-full"
         } lg:static lg:shadow-none lg:translate-x-0`}
       >
-        <div className="px-3 py-2 border-b border-slate-200">
+        <div
+          className={`px-3 py-2 border-b ${
+            isChatDark ? "border-slate-800 bg-slate-950/50 text-slate-200" : "border-slate-200 bg-white text-slate-900"
+          }`}
+        >
           <input
             value={convQuery}
             onChange={(e) => setConvQuery(e.target.value)}
             placeholder="Buscar conversas..."
-            className="w-full border rounded px-3 py-1.5 text-sm"
+            className={`w-full border rounded px-3 py-1.5 text-sm ${
+              isChatDark
+                ? "border-slate-700 bg-slate-900 text-slate-100 placeholder-slate-500"
+                : "border-slate-300 bg-white text-slate-900 placeholder-slate-500"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
@@ -2868,7 +3106,13 @@ export default function Chat() {
             </label>
           </div>
         </div>
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-200 flex items-center justify-between">
+        <div
+          className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide sticky top-0 z-10 flex items-center justify-between ${
+            isChatDark
+              ? "text-slate-400 bg-slate-950/70 border-slate-800"
+              : "text-slate-500 bg-white border-slate-200"
+          }`}
+        >
           <span>Grupos</span>
           <button
             type="button"
@@ -2901,6 +3145,7 @@ export default function Chat() {
             const isPinned = !!pinned?.[g.id];
             const isMuted = !!muted?.[g.id];
             const unreadCount = getEffectiveUnread(g._unread || 0, g.id);
+            const mentionCount = g?._mentions || 0;
             return (
               <button
                 key={g.id}
@@ -2948,6 +3193,15 @@ export default function Chat() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  {mentionCount > 0 && (
+                    <span
+                      className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-[11px] inline-flex items-center justify-center shadow"
+                      title="Você foi mencionado"
+                      aria-label="Você foi mencionado"
+                    >
+                      @
+                    </span>
+                  )}
                   {unreadCount > 0 && (
                     <span className="ml-2 min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
                       {unreadCount}
@@ -2957,7 +3211,13 @@ export default function Chat() {
               </button>
             );
           })}
-        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 border-t border-slate-200 sticky top-0 z-10 bg-white dark:bg-slate-800 flex items-center justify-between">
+        <div
+          className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide border-t sticky top-0 z-10 flex items-center justify-between ${
+            isChatDark
+              ? "text-slate-400 bg-slate-950/70 border-slate-800"
+              : "text-slate-500 bg-white border-slate-200"
+          }`}
+        >
           <span>Pessoas</span>
           <button
             type="button"
@@ -3084,7 +3344,7 @@ export default function Chat() {
       {sideMenu?.open && (
         <div
           ref={sideMenuRef}
-          className="fixed z-50 w-48 bg-white border border-slate-200 rounded shadow"
+          className={`fixed z-50 w-48 rounded shadow ${sideMenuPanelClass} border ${isChatDark ? "shadow-slate-900/60" : "shadow-lg"}`}
           style={{
             top: Math.max(8, sideMenu.y),
             left: Math.max(8, sideMenu.x),
@@ -3095,50 +3355,58 @@ export default function Chat() {
             <>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                 onClick={() => {
                   if (sideMenu?.id) togglePin(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
                 }}
               >
-                {pinned?.[sideMenu.id] ? "Desafixar" : "Fixar"}
+                <IconPin className={`w-4 h-4 ${sideMenuIconClass}`} />
+                <span className="flex-1">
+                  {pinned?.[sideMenu.id] ? "Desafixar" : "Fixar"}
+                </span>
               </button>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                 onClick={() => {
                   const key = sideMenu.groupId || sideMenu.id;
                   if (key) toggleMute(key);
                   setSideMenu((s) => ({ ...s, open: false }));
                 }}
               >
-                {(() => {
-                  const key = sideMenu.groupId || sideMenu.id;
-                  return muted?.[key] ? "Reativar som" : "Silenciar";
-                })()}
+                <IconBellSlash className={`w-4 h-4 ${sideMenuIconClass}`} />
+                <span className="flex-1">
+                  {(() => {
+                    const key = sideMenu.groupId || sideMenu.id;
+                    return muted?.[key] ? "Reativar som" : "Silenciar";
+                  })()}
+                </span>
               </button>
               {sideMenu.groupId && (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                   onClick={() => {
                     markConversationAsUnread(sideMenu.groupId);
                     setSideMenu((s) => ({ ...s, open: false }));
                   }}
                 >
-                  Marcar como não lida
+                  <IconInbox className={`w-4 h-4 ${sideMenuIconClass}`} />
+                  <span className="flex-1">Marcar como não lida</span>
                 </button>
               )}
               {sideMenu.groupId && hasManualUnread(sideMenu.groupId) && (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                   onClick={() => {
                     markConversationAsRead(sideMenu.groupId);
                     setSideMenu((s) => ({ ...s, open: false }));
                   }}
                 >
-                  Marcar como lida
+                  <IconCheckCircle className={`w-4 h-4 ${sideMenuIconClass}`} />
+                  <span className="flex-1">Marcar como lida</span>
                 </button>
               )}
             </>
@@ -3147,46 +3415,54 @@ export default function Chat() {
             <>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                 onClick={() => {
                   if (sideMenu?.id) togglePin(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
                 }}
               >
-                {pinned?.[sideMenu.id] ? "Desafixar" : "Fixar"}
+                <IconPin className={`w-4 h-4 ${sideMenuIconClass}`} />
+                <span className="flex-1">
+                  {pinned?.[sideMenu.id] ? "Desafixar" : "Fixar"}
+                </span>
               </button>
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                 onClick={() => {
                   if (sideMenu?.id) toggleMute(sideMenu.id);
                   setSideMenu((s) => ({ ...s, open: false }));
                 }}
               >
-                {muted?.[sideMenu.id] ? "Reativar som" : "Silenciar"}
+                <IconBellSlash className={`w-4 h-4 ${sideMenuIconClass}`} />
+                <span className="flex-1">
+                  {muted?.[sideMenu.id] ? "Reativar som" : "Silenciar"}
+                </span>
               </button>
               {!!sideMenu?.id && (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                   onClick={() => {
                     markConversationAsUnread(sideMenu.id);
                     setSideMenu((s) => ({ ...s, open: false }));
                   }}
                 >
-                  Marcar como não lida
+                  <IconInbox className={`w-4 h-4 ${sideMenuIconClass}`} />
+                  <span className="flex-1">Marcar como não lida</span>
                 </button>
               )}
               {!!sideMenu?.id && hasManualUnread(sideMenu.id) && (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                  className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm transition-colors ${sideMenuButtonClass}`}
                   onClick={() => {
                     markConversationAsRead(sideMenu.id);
                     setSideMenu((s) => ({ ...s, open: false }));
                   }}
                 >
-                  Marcar como lida
+                  <IconCheckCircle className={`w-4 h-4 ${sideMenuIconClass}`} />
+                  <span className="flex-1">Marcar como lida</span>
                 </button>
               )}
             </>
@@ -3195,7 +3471,7 @@ export default function Chat() {
       )}
       {/* Conversation area */}
       <div
-        className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-200 bg-slate-100 dark:bg-slate-900/60"
+      className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-900/40 bg-slate-100 dark:bg-slate-950/80"
         onDragOver={handleDragOver}
         onDragEnter={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -3206,7 +3482,7 @@ export default function Chat() {
             Solte os arquivos aqui para anexar
           </div>
         )}
-        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
+        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:bg-slate-950/80 dark:border-slate-800 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
           {!isDesktop && (
             <button
               type="button"
@@ -3244,62 +3520,95 @@ export default function Chat() {
             </span>
           </button>
           <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm">
-              <IconSearch className="h-4 w-4 text-slate-500" />
-              <input
-                ref={searchInputRef}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar mensagens..."
-                className="w-64 border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
-                aria-label="Buscar mensagens"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    jumpToMatch(!e.shiftKey);
-                  }
-                }}
-              />
-              <span className="text-[11px] text-slate-500">
-                {searchQuery
-                  ? searchMatches.length
-                    ? `${searchIndex + 1}/${searchMatches.length}`
-                    : "0/0"
-                  : "--"}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="px-1.5 py-1 rounded hover:bg-slate-100"
-                  title="Resultado anterior"
-                  onClick={() => jumpToMatch(false)}
-                >
-                  <IconChevronLeft />
-                </button>
-                <button
-                  type="button"
-                  className="px-1.5 py-1 rounded hover:bg-slate-100"
-                  title="Próximo resultado"
-                  onClick={() => jumpToMatch(true)}
-                >
-                  <IconChevronRight />
-                </button>
-                {searchQuery && (
+            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+                {!searchBarOpen && (
                   <button
                     type="button"
-                    className="px-1.5 py-1 rounded hover:bg-slate-100"
-                    title="Limpar busca"
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => {
+                      setSearchBarOpen(true);
+                      setTimeout(() => {
+                        try {
+                          searchInputRef.current?.focus();
+                        } catch {}
+                      }, 10);
+                    }}
+                    className="text-slate-500 dark:text-slate-300 hover:text-slate-600 dark:hover:text-slate-100"
+                    aria-label="Abrir busca de mensagens"
                   >
-                    <IconX />
+                    <IconSearch className="h-4 w-4" />
                   </button>
                 )}
-              </div>
+                {searchBarOpen && (
+                  <div className="flex items-center gap-2">
+                    <IconSearch className="h-4 w-4 text-slate-500 dark:text-slate-300" />
+                    <input
+                      ref={searchInputRef}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Buscar mensagens..."
+                      className="w-64 border-0 bg-transparent text-sm text-slate-900 focus:outline-none focus:ring-0 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-300"
+                      aria-label="Buscar mensagens"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          jumpToMatch(!e.shiftKey);
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <span className="text-[11px] text-slate-500 dark:text-slate-300">
+                      {searchQuery
+                        ? searchMatches.length
+                          ? `${searchIndex + 1}/${searchMatches.length}`
+                          : "0/0"
+                        : "--"}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="px-1.5 py-1 rounded text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                        title="Resultado anterior"
+                        onClick={() => jumpToMatch(false)}
+                      >
+                        <IconChevronLeft />
+                      </button>
+                      <button
+                        type="button"
+                        className="px-1.5 py-1 rounded text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                        title="Próximo resultado"
+                        onClick={() => jumpToMatch(true)}
+                      >
+                        <IconChevronRight />
+                      </button>
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          className="px-1.5 py-1 rounded text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                          title="Limpar busca"
+                          onClick={() => setSearchQuery("")}
+                        >
+                          <IconX />
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchBarOpen(false);
+                        setSearchQuery("");
+                      }}
+                      className="text-slate-500 dark:text-slate-300 hover:text-slate-600 dark:hover:text-slate-100"
+                      aria-label="Fechar busca"
+                    >
+                      <IconX className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
             </div>
             <div className="relative">
               <button
                 type="button"
-                className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
+                className="px-2 py-1 rounded border border-slate-300 text-slate-600 dark:text-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60"
                 title="Mais opções"
                 aria-haspopup="menu"
                 aria-expanded={convMenuOpen}
@@ -3310,12 +3619,12 @@ export default function Chat() {
               {convMenuOpen && (
                 <div
                   ref={convMenuRef}
-                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow"
+                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-900"
                   role="menu"
                 >
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                    className="w-full text-left px-3 py-2 text-sm text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
                     onClick={() => {
                       if (activePinKey) togglePin(activePinKey);
                       setConvMenuOpen(false);
@@ -3619,16 +3928,18 @@ export default function Chat() {
                       ...
                     </button>
                     {menuFor === m.id && (
-                      <div className="absolute right-0 mt-1 bg-white border border-slate-200 rounded shadow text-sm z-10">
+                      <div
+                        className={`absolute right-0 mt-1 rounded shadow text-sm z-10 border ${messageMenuPanelClass}`}
+                      >
                         <button
-                          className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                          className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
                           onClick={() => {
                             setMenuFor(null);
                             startReply(m);
                           }}
                         >
                           <svg
-                            className="w-4 h-4 text-slate-500"
+                            className={`w-4 h-4 ${messageMenuIconClass}`}
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -3645,7 +3956,7 @@ export default function Chat() {
                           m.type === "text" &&
                           !m.deletedAt && (
                             <button
-                              className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                              className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
                               onClick={() => {
                                 setEditId(m.id);
                                 setEditText(m.content || "");
@@ -3653,7 +3964,7 @@ export default function Chat() {
                               }}
                             >
                               <svg
-                                className="w-4 h-4 text-slate-500"
+                                className={`w-4 h-4 ${messageMenuIconClass}`}
                                 viewBox="0 0 24 24"
                                 fill="none"
                                 stroke="currentColor"
@@ -3668,7 +3979,7 @@ export default function Chat() {
                             </button>
                           )}
                         <button
-                          className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                          className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
                           onClick={() => {
                             setMenuFor(null);
                             toggleFav(m);
@@ -3676,7 +3987,7 @@ export default function Chat() {
                         >
                           <IconStar
                             className={`w-4 h-4 ${
-                              isFav(m.id) ? "text-yellow-400" : "text-slate-500"
+                              isFav(m.id) ? "text-yellow-400" : messageMenuIconClass
                             }`}
                             filled={isFav(m.id)}
                           />
@@ -3684,7 +3995,7 @@ export default function Chat() {
                         </button>
                         {!m.deletedAt && (
                           <button
-                            className="flex items-center gap-2 w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                          className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
                             onClick={() => {
                               setForwardSource(m);
                               setForwardErr("");
@@ -3694,7 +4005,7 @@ export default function Chat() {
                             }}
                           >
                             <svg
-                              className="w-4 h-4 text-slate-500"
+                              className={`w-4 h-4 ${messageMenuIconClass}`}
                               viewBox="0 0 24 24"
                               fill="none"
                               stroke="currentColor"
@@ -3710,14 +4021,18 @@ export default function Chat() {
                         )}
                         {(m.author?.id || m.authorId) === user?.id && (
                           <button
-                            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50"
+                          className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${
+                            isChatDark
+                              ? "text-red-400 hover:bg-red-900/40"
+                              : "text-red-600 hover:bg-red-50"
+                          }`}
                             onClick={() => {
                               setMenuFor(null);
                               deleteMessage(m);
                             }}
                           >
                             <svg
-                              className="w-4 h-4"
+                              className={`w-4 h-4 ${messageMenuIconClass}`}
                               viewBox="0 0 24 24"
                               fill="none"
                               stroke="currentColor"
@@ -3949,6 +4264,51 @@ export default function Chat() {
               Solte os arquivos aqui para anexar
             </div>
           )}
+          {mentionOpen && mentionSuggestions.length > 0 && (
+            <div
+              className="absolute bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+              style={{
+                left: mentionPosition?.left ?? 12,
+                width: mentionPosition?.width ?? "auto",
+              }}
+            >
+              <div className="max-h-52 overflow-y-auto py-1">
+                {mentionSuggestions.map((m, idx) => {
+                  const member = m.user || m;
+                  const selected = idx === mentionIndex;
+                  return (
+                    <button
+                      key={member.id || idx}
+                      type="button"
+                      onClick={() => applyMention(member)}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
+                        selected
+                          ? "bg-blue-50 text-blue-700 dark:bg-slate-700 dark:text-slate-100"
+                          : "hover:bg-slate-50 dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                        {member?.avatarUrl ? (
+                          <img
+                            src={absUrl(member.avatarUrl)}
+                            alt={member.name || "avatar"}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            {(member?.name || "?")
+                              .slice(0, 1)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="truncate">{member?.name || "Usuário"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="flex w-full items-center gap-2 flex-wrap md:flex-nowrap">
             <button
               type="button"
@@ -4003,8 +4363,47 @@ export default function Chat() {
             <textarea
               ref={inputRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setText(value);
+                updateMentionState(value, e.target.selectionStart);
+              }}
               onKeyDown={(e) => {
+                if (mentionOpen && mentionSuggestions.length) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIndex((idx) =>
+                      (idx + 1) % mentionSuggestions.length
+                    );
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIndex((idx) =>
+                      (idx - 1 + mentionSuggestions.length) %
+                      mentionSuggestions.length
+                    );
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    applyMention(mentionSuggestions[mentionIndex] || null);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMentionOpen(false);
+                    setMentionQuery("");
+                    mentionRangeRef.current = null;
+                    return;
+                  }
+                } else if (mentionOpen && e.key === "Escape") {
+                  e.preventDefault();
+                  setMentionOpen(false);
+                  setMentionQuery("");
+                  mentionRangeRef.current = null;
+                  return;
+                }
                 if (
                   e.key === "Enter" &&
                   !e.shiftKey &&
@@ -4016,6 +4415,14 @@ export default function Chat() {
                   e.preventDefault();
                   sendMessage();
                 }
+              }}
+              onKeyUp={(e) => {
+                const caret = e.currentTarget.selectionStart;
+                updateMentionState(e.currentTarget.value, caret);
+              }}
+              onClick={(e) => {
+                const caret = e.currentTarget.selectionStart;
+                updateMentionState(e.currentTarget.value, caret);
               }}
               onPaste={(e) => {
                 try {
@@ -4320,18 +4727,18 @@ export default function Chat() {
         />
       )}
       {rightOpen && (
-        <aside
-          className={`flex h-full flex-col border-l border-slate-200 bg-white dark:bg-slate-900/70 transition-transform duration-200 ease-out ${
-            isDesktop
-              ? "w-[360px] max-w-sm flex-shrink-0"
-              : "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-xl"
+      <aside
+        className={`chat-right-panel flex h-full flex-col transition-transform duration-200 ease-out border-l border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 ${
+          isDesktop
+            ? "w-[360px] max-w-sm flex-shrink-0"
+            : "fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-xl"
           }`}
-        >
-          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+      >
+          <div className={`px-4 py-3 border-b flex items-center justify-between ${rightPanelHeaderClass}`}>
             <div className="font-semibold">Detalhes</div>
             <button
               type="button"
-              className="text-slate-500 hover:text-slate-700"
+              className={isChatDark ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-700"}
               aria-label="Fechar detalhes"
               onClick={() => setRightOpen(false)}
             >
@@ -4347,13 +4754,11 @@ export default function Chat() {
               </span>
             )}
           </div>
-          <div className="px-4 pt-2 border-b border-slate-200">
+          <div className="px-4 pt-2 border-b border-slate-200 dark:border-slate-700">
             <div className="inline-flex items-center gap-2 text-sm">
               <button
                 className={`px-3 py-2 ${
-                  rightTab === "perfil"
-                    ? "border-b-2 border-blue-600 text-blue-700"
-                    : "text-slate-600 hover:text-slate-800"
+                  rightTab === "perfil" ? rightPanelTabActive : rightPanelTabInactive
                 }`}
                 onClick={() => setRightTab("perfil")}
               >
@@ -4362,8 +4767,8 @@ export default function Chat() {
               <button
                 className={`px-3 py-2 ${
                   rightTab === "arquivos"
-                    ? "border-b-2 border-blue-600 text-blue-700"
-                    : "text-slate-600 hover:text-slate-800"
+                    ? rightPanelTabActive
+                    : rightPanelTabInactive
                 }`}
                 onClick={() => setRightTab("arquivos")}
               >
@@ -4372,8 +4777,8 @@ export default function Chat() {
               <button
                 className={`px-3 py-2 ${
                   rightTab === "favoritos"
-                    ? "border-b-2 border-blue-600 text-blue-700"
-                    : "text-slate-600 hover:text-slate-800"
+                    ? rightPanelTabActive
+                    : rightPanelTabInactive
                 }`}
                 onClick={() => setRightTab("favoritos")}
               >
@@ -4392,7 +4797,7 @@ export default function Chat() {
           </div>
           <div className="p-4 space-y-4 overflow-auto flex-1">
             {rightLoading ? (
-              <div className="text-sm text-slate-500">Carregando...</div>
+              <div className="text-sm text-slate-500 dark:text-slate-300">Carregando...</div>
             ) : (
               <>
                 {rightTab === "perfil" && (
@@ -4400,7 +4805,7 @@ export default function Chat() {
                     {rightMode === "contact" ? (
                       <>
                         <div className="flex flex-col items-center gap-3">
-                          <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                          <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
                             {contactProfile?.avatarUrl ? (
                               <img
                                 src={absUrl(contactProfile.avatarUrl)}
@@ -4408,7 +4813,7 @@ export default function Chat() {
                                 className="w-full h-full object-cover"
                               />
                             ) : (
-                              <span className="text-slate-500 text-sm">
+                              <span className="text-slate-500 dark:text-slate-300 text-sm">
                                 Sem foto
                               </span>
                             )}
@@ -4417,25 +4822,25 @@ export default function Chat() {
                             <div className="text-center font-semibold truncate">
                               {contactProfile?.name || "Contato"}
                             </div>
-                            <div className="mt-2 space-y-1 text-sm">
+                             <div className="mt-2 space-y-1 text-sm">
                               {contactProfile?.email && (
-                                <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                <div className="px-3 py-1 rounded bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 truncate text-center text-slate-600 dark:text-slate-200">
                                   {contactProfile.email}
                                 </div>
                               )}
                               {contactProfile?.phone && (
-                                <div className="px-3 py-1 rounded bg-slate-50 border border-slate-200 truncate text-center">
+                                <div className="px-3 py-1 rounded bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 truncate text-center text-slate-600 dark:text-slate-200">
                                   {contactProfile.phone}
                                 </div>
                               )}
                             </div>
                           </div>
                         </div>
-                        <div className="mt-3 flex justify-center gap-2">
+                           <div className="mt-3 flex justify-center gap-2">
                           {contactProfile?.phone && (
                             <button
                               type="button"
-                              className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                               className={`px-3 py-2 rounded border ${isChatDark ? "border-slate-700 hover:bg-slate-900/40 text-slate-200" : "border-slate-300 hover:bg-slate-50 text-slate-700"}`}
                               onClick={() => {
                                 const params = new URLSearchParams();
                                 if (contactProfile.phone)
@@ -4452,7 +4857,7 @@ export default function Chat() {
                           )}
                           <button
                             type="button"
-                            className="px-3 py-2 rounded border border-slate-300 hover:bg-slate-50"
+                               className={`px-3 py-2 rounded border ${isChatDark ? "border-slate-700 hover:bg-slate-900/40 text-slate-200" : "border-slate-300 hover:bg-slate-50 text-slate-700"}`}
                             onClick={() => setRightTab("arquivos")}
                           >
                             Ver arquivos
@@ -4875,6 +5280,7 @@ export default function Chat() {
           </div>
         </aside>
       )}
+      </div>
     </div>
   );
 }

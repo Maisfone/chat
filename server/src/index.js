@@ -15,8 +15,10 @@ import meetingRoutes from "./routes/meetings.js";
 import configRoutes from "./routes/config.js";
 import backupRoutes from "./routes/backup.js";
 import pushRoutes from "./routes/push.js";
+import adminMetricsRoutes from "./routes/adminMetrics.js";
 import { setVapidFromEnv } from "./lib/push.js";
 import { initBackupScheduler } from "./lib/backupScheduler.js";
+import { markOnline, markOffline, updateStatus, getPresenceSnapshot } from "./lib/presence.js";
 
 dotenv.config();
 setVapidFromEnv();
@@ -27,36 +29,6 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
 });
-
-// In-memory presence map: userId => { count, status }
-const presence = new Map();
-function setOnline(userId, status = "online") {
-  if (!userId) return;
-  const cur = presence.get(userId) || { count: 0, status: "offline" };
-  const next = { count: (cur.count || 0) + 1, status: status || cur.status || "online" };
-  presence.set(userId, next);
-  if ((cur.count || 0) === 0) {
-    try { io.emit("presence:update", { userId, status: next.status || "online" }); } catch {}
-  }
-}
-function setStatus(userId, status = "online") {
-  if (!userId) return;
-  const cur = presence.get(userId) || { count: 0, status: "offline" };
-  const next = { count: cur.count || 0, status: status || "online" };
-  presence.set(userId, next);
-  try { io.emit("presence:update", { userId, status: next.status }); } catch {}
-}
-function setOffline(userId) {
-  if (!userId) return;
-  const cur = presence.get(userId) || { count: 0, status: "offline" };
-  const count = Math.max(0, (cur.count || 1) - 1);
-  if (count === 0) {
-    presence.set(userId, { count: 0, status: "offline" });
-    try { io.emit("presence:update", { userId, status: "offline" }); } catch {}
-  } else {
-    presence.set(userId, { count, status: cur.status || "online" });
-  }
-}
 
 // Disponibiliza io nas rotas
 app.use((req, res, next) => {
@@ -105,6 +77,7 @@ app.use("/api/phone", phoneRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/admin/config", configRoutes);
 app.use("/api/admin/backup", backupRoutes);
+app.use("/api/admin/metrics", adminMetricsRoutes);
 app.use("/api/push", pushRoutes);
 
 initBackupScheduler();
@@ -154,10 +127,11 @@ io.on("connection", (socket) => {
       const status = payload.status || "online";
       socket.data.userId = userId;
       socket.data.status = status;
-      setOnline(userId, status);
-      // send snapshot back
-      const users = [];
-      presence.forEach((v, k) => { if ((v?.count || 0) > 0) users.push({ userId: k, status: v.status || "online" }); });
+      const { firstSession, status: nextStatus } = markOnline(userId, status);
+      if (firstSession) {
+        try { io.emit("presence:update", { userId, status: nextStatus || "online" }); } catch {}
+      }
+      const users = getPresenceSnapshot();
       socket.emit("presence:snapshot", { users });
     } catch {}
   });
@@ -166,19 +140,24 @@ io.on("connection", (socket) => {
     try {
       const status = payload.status || "online";
       const userId = socket.data.userId || payload.userId;
-      setStatus(userId, status);
-      socket.data.status = status;
+      const next = updateStatus(userId, status);
+      socket.data.status = next?.status || status;
+      try { io.emit("presence:update", { userId, status: next?.status || "online" }); } catch {}
     } catch {}
   });
   socket.on("presence:who", () => {
     try {
-      const users = [];
-      presence.forEach((v, k) => { if ((v?.count || 0) > 0) users.push({ userId: k, status: v.status || "online" }); });
+      const users = getPresenceSnapshot();
       socket.emit("presence:snapshot", { users });
     } catch {}
   });
   socket.on("disconnect", () => {
-    try { setOffline(socket.data?.userId); } catch {}
+    try {
+      const { wentOffline } = markOffline(socket.data?.userId);
+      if (wentOffline) {
+        try { io.emit("presence:update", { userId: socket.data?.userId, status: "offline" }); } catch {}
+      }
+    } catch {}
   });
 });
 

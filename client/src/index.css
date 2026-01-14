@@ -36,13 +36,22 @@ body,
 
 /* Modern look & feel */
 :root {
+  color-scheme: light dark;
   --chat-border: 226 232 240; /* slate-200 */
   --chat-blue: 37 99 235; /* blue-600 */
   --chat-bg: #f8fafc; /* slate-50 */
+  --chat-dark-bg: #070a14;
+  --chat-dark-panel: #111624;
+}
+body {
+  background-color: var(--chat-bg);
+  color: #0f172a;
 }
 body.dark {
+  color-scheme: dark;
+  color: #f8fafc;
   --chat-border: 51 65 85; /* slate-700 */
-  --chat-bg: #0b1220; /* near slate-950 */
+  --chat-bg: var(--chat-dark-bg);
 }
 
 /* Composer as glass/pill */
@@ -69,10 +78,46 @@ body.dark .chat-composer {
 
 /* Wallpaper sutil na área de mensagens */
 .chat-bg {
-  background-image: url("/images/background.jpg");
+  background-color: var(--chat-bg);
+  background-image:
+    linear-gradient(
+      rgba(255, 255, 255, 0.85),
+      rgba(255, 255, 255, 0.85)
+    ),
+    url("/images/background.jpg");
+  background-position: center;
+  background-size: cover;
+  background-repeat: repeat;
+  background-attachment: fixed;
+  transition: background-color 0.3s ease;
 }
 
 body.dark .chat-bg {
+  background-color: var(--chat-dark-bg);
+  background-image:
+    linear-gradient(
+      rgba(7, 10, 20, 0.85),
+      rgba(7, 10, 20, 0.85)
+    ),
+    url("/images/background.jpg");
+  background-position: center;
+  background-size: cover;
+  background-repeat: repeat;
+  background-attachment: fixed;
+  background-blend-mode: normal;
+  filter: saturate(0.75) brightness(0.9);
+}
+
+/* Garante que o painel de detalhes acompanhe o tema escuro */
+.chat-right-panel {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+.dark .chat-right-panel,
+body.dark .chat-right-panel,
+:root.dark .chat-right-panel {
+  background-color: var(--chat-dark-panel) !important;
+  color: #f8fafc !important;
 }
 
 /* Variante estilo WhatsApp: verde suave + padrão pontilhado */

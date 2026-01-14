@@ -49,6 +49,9 @@ export default function Admin() {
   const [addToGroupLoading, setAddToGroupLoading] = useState(false)
   // Toast simples
   const [toast, setToast] = useState(null) // { type: 'success'|'error'|'info', message: string }
+  const [metrics, setMetrics] = useState(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [metricsError, setMetricsError] = useState('')
   function showToast(message, type = 'info', ms = 3000) {
     setToast({ message, type })
     try { if (ms) setTimeout(() => setToast(null), ms) } catch {}
@@ -71,6 +74,22 @@ export default function Admin() {
     const formatted = num >= 10 ? num.toFixed(0) : num.toFixed(1)
     return `${formatted} ${units[exponent]}`
   }, [])
+
+  const formatNumber = useCallback((value) => {
+    const num = Number(value)
+    if (!Number.isFinite(num)) return '-'
+    return num.toLocaleString('pt-BR')
+  }, [])
+  const formatDecimal = useCallback((value) => {
+    const num = Number(value)
+    if (!Number.isFinite(num)) return '-'
+    return num.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  }, [])
+  const metricsTimeline = useMemo(() => {
+    const list = Array.isArray(metrics?.recentTimeline) ? metrics.recentTimeline : []
+    const max = Math.max(1, list.reduce((acc, bucket) => Math.max(acc, bucket?.count || 0), 0))
+    return { list, max }
+  }, [metrics])
 
   // Admin > Configurações (ícone do chat)
   const [cfgIcon, setCfgIcon] = useState('')
@@ -157,6 +176,19 @@ export default function Admin() {
     ;(async () => {
       try { await loadAdminConfig({ silent: true }) } catch {}
     })()
+  }, [])
+  const loadMetrics = useCallback(async () => {
+    setMetricsError('')
+    setMetricsLoading(true)
+    try {
+      const data = await api.get('/admin/metrics')
+      setMetrics(data)
+    } catch (err) {
+      setMetricsError(err.message || 'Falha ao carregar metricas')
+      setMetrics(null)
+    } finally {
+      setMetricsLoading(false)
+    }
   }, [])
   function onCfgFile(e){
     const f = e.target.files?.[0]; if (!f) return
@@ -391,6 +423,12 @@ export default function Admin() {
       loadBackups()
     }
   }, [tab, loadBackups])
+
+  useEffect(() => {
+    if (tab === 'metricas') {
+      loadMetrics()
+    }
+  }, [tab, loadMetrics])
 
 
   function triggerSoundUpload() {
@@ -758,6 +796,7 @@ export default function Admin() {
           <button onClick={()=>setTab('usuarios')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='usuarios'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Usuários</button> 
           <button onClick={()=>setTab('grupos')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='grupos'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Grupos</button> 
           <button onClick={()=>setTab('telefonia')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='telefonia'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Telefonia</button> 
+          <button onClick={()=>setTab('metricas')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='metricas'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Metricas</button> 
           <button onClick={()=>setTab('Configuracoes')} className={`px-2 py-2 -mb-px border-b-2 ${tab==='Configuracoes'?'border-blue-600 text-blue-700':'border-transparent text-slate-600 hover:text-slate-800'}`}>Configurações</button> 
         </div> 
       </div> 
@@ -1283,6 +1322,117 @@ export default function Admin() {
               <button className="px-3 py-2 rounded bg-blue-600 text-white">Alterar senha</button>
             </div>
           </form>
+        </section>
+      )}
+
+      {tab==='metricas' && (
+        <section className="mt-4 space-y-4">
+          <div className="bg-white p-4 rounded border border-slate-200 space-y-4">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Metricas do chat</h3>
+                <p className="text-sm text-slate-500">Monitoramento de carga e atividade das conversas.</p>
+              </div>
+              <button
+                type="button"
+                className="px-3 py-1 text-sm rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                onClick={loadMetrics}
+                disabled={metricsLoading}
+              >
+                {metricsLoading ? 'Atualizando...' : 'Atualizar'}
+              </button>
+            </div>
+            {metricsError && <div className="text-sm text-red-600">{metricsError}</div>}
+            {!metrics && metricsLoading && <div className="text-sm text-slate-500">Carregando metricas...</div>}
+            {metrics && (
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Usuarios cadastrados</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.totalUsers)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Grupos registrados</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.totalGroups)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Mensagens totais</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.totalMessages)}</div>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="p-4 rounded border border-slate-200 bg-white">
+                    <div className="text-xs text-slate-500">Mensagens ultimas 24h</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.messagesLast24Hours)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-white">
+                    <div className="text-xs text-slate-500">Mensagens ultima hora</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.messagesLastHour)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-white">
+                    <div className="text-xs text-slate-500">Media / min (ultima hora)</div>
+                    <div className="text-2xl font-semibold">{formatDecimal(metrics.avgMessagesPerMinuteLastHour)}</div>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Usuarios online agora</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.onlineUsers)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Sessoes ativas</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.onlineSessions)}</div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50">
+                    <div className="text-xs text-slate-500">Grupos ativos (ultima hora)</div>
+                    <div className="text-2xl font-semibold">{formatNumber(metrics.groupsActiveLastHour)}</div>
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="p-4 rounded border border-slate-200 bg-slate-50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-medium text-slate-700">Ultimos 10 minutos</h4>
+                      <span className="text-xs text-slate-500">Minutos</span>
+                    </div>
+                    <div className="space-y-2">
+                      {metricsTimeline.list.map((bucket) => (
+                        <div key={bucket.timestamp} className="flex items-center gap-3 text-xs">
+                          <div className="w-16 text-right text-slate-500">{bucket.label}</div>
+                          <div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden">
+                            <div className="h-full bg-blue-500" style={{ width: `${(bucket.count / metricsTimeline.max) * 100}%` }} />
+                          </div>
+                          <div className="w-10 text-right font-semibold text-slate-700">{bucket.count}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded border border-slate-200 bg-white space-y-3">
+                    <h4 className="text-sm font-medium text-slate-700">Grupos mais ativos (24h)</h4>
+                    {metrics.busiestGroups?.length ? (
+                      <ul className="space-y-2 text-sm text-slate-600">
+                        {metrics.busiestGroups.map((group) => (
+                          <li key={group.groupId} className="flex items-center justify-between">
+                            <span className="truncate">{group.name}</span>
+                            <span className="text-xs text-slate-500">{formatNumber(group.messages)} msgs</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-sm text-slate-500">Nenhum grupo ativo neste periodo.</div>
+                    )}
+                    <div className="text-xs text-slate-500">
+                      Grupos ativos 24h: {formatNumber(metrics.groupsActiveLast24Hours)}
+                    </div>
+                  </div>
+                </div>
+                {metrics.lastMessage && (
+                  <div className="text-xs text-slate-500">
+                    Ultima mensagem em <span className="font-medium text-slate-700">{metrics.lastMessage.groupName || '-'}</span> por <span className="font-medium text-slate-700">{metrics.lastMessage.authorName || '-'}</span> em {formatDateTime(metrics.lastMessage.createdAt)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       )}
 

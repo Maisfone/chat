@@ -110,7 +110,22 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [status, setStatus] = useState(() => localStorage.getItem('chat_status') || 'online')
   const saveStatus = (s) => { setStatus(s); localStorage.setItem('chat_status', s) }
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light')
+  const getStoredThemeMode = () => {
+    if (typeof window === 'undefined') return 'auto'
+    try {
+      const stored = localStorage.getItem('theme')
+      if (stored === 'light' || stored === 'dark' || stored === 'auto') return stored
+    } catch {}
+    return 'auto'
+  }
+  const getSystemPreference = () => {
+    if (typeof window === 'undefined') return 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  const [themeMode, setThemeMode] = useState(getStoredThemeMode)
+  const [systemTheme, setSystemTheme] = useState(getSystemPreference)
+  const appliedTheme = themeMode === 'auto' ? systemTheme : themeMode
+  const isDarkMode = appliedTheme === 'dark'
   const [chatBg, setChatBg] = useState(() => localStorage.getItem('chat_bg') || 'whatsapp')
   const [mini, setMini] = useState(false)
   const [chatIcon, setChatIcon] = useState(() => localStorage.getItem('chat_icon') || '')
@@ -124,13 +139,39 @@ export default function App() {
   }, [])
   const sidebarWidthClass = mini ? "w-16 md:w-16" : "w-64 md:w-64"
   const handleOpenChatList = useCallback(() => {}, [])
+  const applyThemeMode = (mode) => {
+    setThemeMode(mode)
+    try {
+      window.dispatchEvent(new Event("chat:themeChanged"))
+    } catch {}
+  }
   useEffect(() => {
     const root = document.documentElement
     const body = document.body
-    if (theme === 'dark') { root.classList.add('dark'); body.classList.add('dark') }
-    else { root.classList.remove('dark'); body.classList.remove('dark') }
-    localStorage.setItem('theme', theme)
-  }, [theme])
+    const darkMode = appliedTheme === 'dark'
+    root.classList.toggle('dark', darkMode)
+    body.classList.toggle('dark', darkMode)
+  }, [appliedTheme])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleChange = (event) => {
+      setSystemTheme(event.matches ? 'dark' : 'light')
+    }
+    handleChange(media)
+    if (media.addEventListener) {
+      media.addEventListener('change', handleChange)
+      return () => media.removeEventListener('change', handleChange)
+    }
+    media.addListener(handleChange)
+    return () => media.removeListener(handleChange)
+  }, [])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.setItem('theme', themeMode)
+    } catch {}
+  }, [themeMode])
   useEffect(() => {
     const body = document.body
     try { body.setAttribute('data-chat-bg', chatBg) } catch {}
@@ -228,10 +269,21 @@ export default function App() {
     avatarInputRef.current?.click()
   }
 
+  const menuPanelClasses =
+    "bg-white text-slate-900 border-slate-200 shadow-lg dark:bg-slate-950/95 dark:text-slate-100 dark:border-slate-800 dark:shadow-slate-950/30 backdrop-blur-sm"
+  const panelBorderClass = isDarkMode ? "border-slate-700" : "border-slate-200"
+  const panelTextClass = isDarkMode ? "text-slate-200" : "text-slate-600"
+  const panelLinkTextClass = isDarkMode ? "text-slate-100" : "text-slate-900"
   const renderMenuPanel = (positionClass) => (
-    <div className={`${positionClass} w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded shadow-lg p-3 z-50`}>
+    <div
+      className={`${positionClass} w-64 rounded shadow-lg p-3 z-50 border ${menuPanelClasses}`}
+      style={{
+        backgroundColor: isDarkMode ? "var(--chat-dark-panel)" : undefined,
+        color: isDarkMode ? "#f8fafc" : undefined,
+      }}
+    >
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Preferencias</div>
+        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Preferencias</div>
         <button
           type="button"
           onClick={() => setMenuOpen(false)}
@@ -243,27 +295,83 @@ export default function App() {
           </svg>
         </button>
       </div>
-      <div className="mt-3 border-t border-slate-200 dark:border-slate-700" />
-      <div className="px-1.5 py-1 text-xs text-slate-500 dark:text-slate-400">Status</div>
+      <div className={`mt-3 border-t ${panelBorderClass}`} />
+      <div className={`px-1.5 py-1 text-xs ${panelTextClass}`}>Status</div>
       <div className="flex flex-wrap gap-2 px-1.5 py-1">
-        <button onClick={()=>saveStatus('online')} className={`px-2 py-1 rounded text-sm ${status==='online'?'bg-green-100 text-green-700':'hover:bg-slate-50 dark:hover:bg-slate-700/60'}`}>Online</button>
-        <button onClick={()=>saveStatus('ausente')} className={`px-2 py-1 rounded text-sm ${status==='ausente'?'bg-yellow-100 text-yellow-700':'hover:bg-slate-50 dark:hover:bg-slate-700/60'}`}>Ausente</button>
-        <button onClick={()=>saveStatus('offline')} className={`px-2 py-1 rounded text-sm ${status==='offline'?'bg-slate-100 text-slate-700':'hover:bg-slate-50 dark:hover:bg-slate-700/60'}`}>Offline</button>
+        {["online", "ausente", "offline"].map((mode) => {
+          const label =
+            mode === "online" ? "Online" : mode === "ausente" ? "Ausente" : "Offline";
+          const highlight = (() => {
+            if (mode === status) {
+              if (mode === "online") {
+                return isDarkMode
+                  ? "bg-emerald-900 text-emerald-100 border-emerald-600"
+                  : "bg-green-100 text-green-700 border-green-200";
+              }
+              if (mode === "ausente") {
+                return isDarkMode
+                  ? "bg-amber-900 text-amber-100 border-amber-600"
+                  : "bg-yellow-100 text-yellow-700 border-yellow-200";
+              }
+              return isDarkMode
+                ? "bg-slate-800 text-slate-100 border-slate-600"
+                : "bg-slate-200 text-slate-900 border-slate-200";
+            }
+            return isDarkMode
+              ? "border border-transparent bg-slate-900/40 text-slate-200 hover:border-slate-600"
+              : "border border-transparent bg-slate-50 text-slate-700 hover:border-slate-200";
+          })();
+          return (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => saveStatus(mode)}
+              className={`px-2 py-1 rounded text-sm border ${highlight}`}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
-      <div className="mt-2 border-t border-slate-200 dark:border-slate-700" />
-      <div className="px-1.5 py-1 text-xs text-slate-500 dark:text-slate-400">Tema</div>
-      <div className="flex gap-2 px-1.5 py-1">
-        <button onClick={()=>setTheme('light')} className={`px-2 py-1 rounded text-sm ${theme==='light'?'bg-slate-100 text-slate-700':'hover:bg-slate-50 dark:hover:bg-slate-700/60'}`}>Claro</button>
-        <button onClick={()=>setTheme('dark')} className={`px-2 py-1 rounded text-sm ${theme==='dark'?'bg-slate-700 text-white':'hover:bg-slate-50 dark:hover:bg-slate-700/60'}`}>Escuro</button>
+      <div className={`mt-2 border-t ${panelBorderClass}`} />
+      <div className={`px-1.5 py-1 text-xs ${panelTextClass}`}>Tema</div>
+      <div className="flex flex-wrap gap-2 px-1.5 py-1">
+        {[
+          { key: "light", label: "Claro" },
+          { key: "dark", label: "Escuro" },
+          { key: "auto", label: "Sistema" },
+        ].map((option) => {
+          const active = themeMode === option.key;
+          const base =
+            option.key === "dark"
+              ? "bg-slate-800 text-white"
+              : option.key === "auto"
+              ? "bg-blue-600 text-white"
+              : "bg-slate-100 text-slate-900";
+          const inactive =
+            "bg-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/30";
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => applyThemeMode(option.key)}
+              className={`px-2 py-1 rounded text-sm border ${
+                active ? `${base} border-transparent` : `${inactive} border-transparent`
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
       </div>
-      <div className="mt-2 border-t border-slate-200 dark:border-slate-700" />
-      <div className="px-1.5 py-1 text-xs text-slate-500 dark:text-slate-400">Foto</div>
+      <div className={`mt-2 border-t ${panelBorderClass}`} />
+      <div className={`px-1.5 py-1 text-xs ${panelTextClass}`}>Foto</div>
       <button
         type="button"
         onClick={() => {
           triggerAvatarPicker()
         }}
-        className="w-full inline-flex items-center justify-center gap-2 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/60 disabled:opacity-50"
+        className="w-full inline-flex items-center justify-center gap-2 px-2 py-1.5 rounded border border-slate-300 bg-white text-slate-900 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800/60 disabled:opacity-50"
         disabled={avatarUploading}
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
@@ -271,21 +379,37 @@ export default function App() {
         </svg>
         <span>{avatarUploading ? 'Enviando...' : 'Alterar foto'}</span>
       </button>
-      <div className="mt-2 border-t border-slate-200 dark:border-slate-700" />
+      <div className={`mt-2 border-t ${panelBorderClass}`} />
       <div className="flex flex-col gap-1 px-1.5 py-1">
-        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Chat</button>
+        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/') }} className={`px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-800/60 text-left ${panelLinkTextClass}`}>Ir para Chat</button>
         {user?.isAdmin && (
-          <button type="button" onClick={()=>{ setMenuOpen(false); nav('/admin') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Ir para Admin</button>
+          <button type="button" onClick={()=>{ setMenuOpen(false); nav('/admin') }} className={`px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-800/60 text-left ${panelLinkTextClass}`}>Ir para Admin</button>
         )}
-        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/profile') }} className="px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left">Editar perfil</button>
+        <button type="button" onClick={()=>{ setMenuOpen(false); nav('/profile') }} className={`px-2 py-1.5 text-sm rounded hover:bg-slate-50 dark:hover:bg-slate-800/60 text-left ${panelLinkTextClass}`}>Editar perfil</button>
         <button type="button" onClick={logout} className="px-2 py-1.5 text-sm text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/30 text-left">Sair</button>
       </div>
     </div>
   )
-  const isActive = (path) => (loc.pathname === path ? 'text-blue-600 font-semibold' : 'text-slate-700 hover:text-blue-600')
+  const navLinkClass = (path) => {
+    const active = loc.pathname === path
+    const base = "px-2 py-2 rounded flex items-center gap-2 transition-colors duration-150"
+    const activeClasses = isDarkMode
+      ? "bg-slate-800 text-slate-100 font-semibold shadow-sm"
+      : "bg-slate-100 text-slate-900 font-semibold shadow-sm"
+    const inactiveClasses = isDarkMode
+      ? "text-slate-300 hover:text-white border border-transparent"
+      : "text-slate-700 hover:text-blue-600 border border-transparent"
+    return `${base} ${active ? activeClasses : inactiveClasses}`
+  }
   return (
-    <div className="flex h-screen overflow-x-hidden bg-slate-50 dark:bg-slate-900 dark:text-slate-100">
-      <aside className={`${sidebarWidthClass} flex-shrink-0 border-r border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800 flex flex-col z-40`}>
+    <div className="flex h-screen overflow-x-hidden bg-slate-50 dark:bg-slate-950 dark:text-slate-100">
+      <aside
+        className={`${sidebarWidthClass} flex-shrink-0 p-4 flex flex-col z-40 ${
+          isDarkMode
+            ? "bg-slate-950 border-r border-slate-800 text-slate-100"
+            : "bg-white border-r border-slate-200 text-slate-900"
+        }`}
+      >
         <div className="flex items-center justify-between">
           {mini ? (
             chatIcon ? (
@@ -312,10 +436,10 @@ export default function App() {
             <span className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-xs rounded px-2 py-1 shadow z-50 whitespace-nowrap dark:bg-slate-700">{mini ? 'Expandir' : 'Recolher'}</span>
           </div>
         </div>
-        {!mini && <div className="text-xs text-slate-500 mt-1">Olá, {user?.name}</div>}
+        {!mini && <div className="text-xs text-slate-500 mt-1 dark:text-slate-400">Olá, {user?.name}</div>}
         <nav className="mt-4 flex flex-col gap-2">
           <div className="relative group">
-            <Link title="Conversas" className={`px-2 py-2 rounded flex items-center gap-2 ${isActive('/conversas')}`} to="/conversas" onClick={handleOpenChatList}>
+            <Link title="Conversas" className={navLinkClass('/conversas')} to="/conversas" onClick={handleOpenChatList}>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10a9.96 9.96 0 0 1-4.587-1.112l-3.826 1.067a1.25 1.25 0 0 1-1.54-1.54l1.068-3.823A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2Zm0 1.5A8.5 8.5 0 0 0 3.5 12c0 1.47.373 2.883 1.073 4.137l.15.27-1.112 3.984 3.987-1.112.27.15A8.5 8.5 0 1 0 12 3.5ZM8.75 13h4.498a.75.75 0 0 1 .102 1.493l-.102.007H8.75a.75.75 0 0 1-.102-1.493L8.75 13h4.498H8.75Zm0-3.5h6.505a.75.75 0 0 1 .101 1.493l-.101.007H8.75a.75.75 0 0 1-.102-1.493L8.75 9.5h6.505H8.75Z"></path>
               </svg>
@@ -326,7 +450,7 @@ export default function App() {
             )}
           </div>
           <div className="relative group">
-            <Link title="Telefonia" className={`px-2 py-2 rounded flex items-center gap-2 ${isActive('/telefonia')}`} to="/telefonia">
+            <Link title="Telefonia" className={navLinkClass('/telefonia')} to="/telefonia">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M2.25 6.75c0-1.24 1.01-2.25 2.25-2.25h3c.97 0 1.8.62 2.1 1.54l.86 2.58a2.25 2.25 0 0 1-.57 2.31l-1.21 1.21a12.06 12.06 0 0 0 4.88 4.88l1.21-1.21a2.25 2.25 0 0 1 2.31-.57l2.58.86c.92.3 1.54 1.13 1.54 2.1v3c0 1.24-1.01 2.25-2.25 2.25H18c-8.28 0-15-6.72-15-15v-3Z"/></svg>
               {!mini && <span>Telefonia</span>}
             </Link>
@@ -335,7 +459,7 @@ export default function App() {
             )}
           </div>
           <div className="relative group">
-            <Link title="Reuniões" className={`px-2 py-2 rounded flex items-center gap-2 ${isActive('/reunioes')}`} to="/reunioes">
+            <Link title="Reuniões" className={navLinkClass('/reunioes')} to="/reunioes">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path d="M6.75 2a.75.75 0 0 1 .75.75V4h9V2.75a.75.75 0 0 1 1.5 0V4h.75A2.25 2.25 0 0 1 21 6.25v11A2.25 2.25 0 0 1 18.75 19.5H5.25A2.25 2.25 0 0 1 3 17.25v-11A2.25 2.25 0 0 1 5.25 4H6V2.75a.75.75 0 0 1 .75-.75Zm12 6H5.25a.75.75 0 0 0-.75.75V9h15V8.75a.75.75 0 0 0-.75-.75ZM19.5 10.5h-15V17.25c0 .414.336.75.75.75h13.5a.75.75 0 0 0 .75-.75V10.5Zm-9.75 2.25a.75.75 0 0 1 .102 1.493L9.75 14.25h-2.5a.75.75 0 0 1-.102-1.493l.102-.007h2.5Zm6 0a.75.75 0 0 1 .102 1.493l-.102.007h-3.5a.75.75 0 0 1-.102-1.493l.102-.007h3.5Z" />
               </svg>
@@ -347,7 +471,7 @@ export default function App() {
           </div>
           {user?.isAdmin && (
             <div className="relative group">
-              <Link title="Admin" className={`px-2 py-2 rounded flex items-center gap-2 ${isActive('/admin')}`} to="/admin">
+              <Link title="Admin" className={navLinkClass('/admin')} to="/admin">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 2.25 3.75 6v5.25c0 5.108 3.66 9.837 8.625 10.5 4.965-.663 8.625-5.392 8.625-10.5V6L12 2.25Zm0 5.25a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5Zm0 12a7.5 7.5 0 0 1-6-3.09c.03-1.982 4.5-3.06 6-3.06s5.97 1.078 6 3.06A7.5 7.5 0 0 1 12 19.5Z"/></svg>
                 {!mini && <span>Admin</span>}
               </Link>
@@ -358,7 +482,7 @@ export default function App() {
           )}
           {/* Contatos (abaixo de Telefonia) */}
           <div className="relative group">
-            <Link title="Contatos" className={`px-2 py-2 rounded flex items-center gap-2 ${isActive('/contatos')}`} to="/contatos">
+            <Link title="Contatos" className={navLinkClass('/contatos')} to="/contatos">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path d="M5.25 3A2.25 2.25 0 0 0 3 5.25v13.5A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V5.25A2.25 2.25 0 0 0 18.75 3H5.25Zm6.75 4.5a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5Zm0 6c2.209 0 4.5 1.122 4.5 2.5V17H7.5v-1c0-1.378 2.291-2.5 4.5-2.5Z"/>
               </svg>
@@ -405,7 +529,7 @@ export default function App() {
                     }`}
                   ></span>
                 </button>
-                {menuOpen && renderMenuPanel('fixed top-4 left-20')}
+                {menuOpen && renderMenuPanel('fixed top-4 left-5')}
               </div>
               {avatarUploading && <span className="text-[10px] text-slate-500">Enviando...</span>}
               {avatarMsg && <span className="text-[10px] text-green-600 text-center max-w-[64px]">{avatarMsg}</span>}
@@ -416,7 +540,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
-                className="w-full inline-flex items-center gap-3 rounded border border-slate-300 dark:border-slate-600 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left"
+                className="w-full inline-flex items-center gap-3 rounded border border-slate-300 dark:border-slate-600 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 text-left text-slate-900 dark:text-slate-100"
                 aria-expanded={menuOpen}
               >
                 <span className="relative">
@@ -431,7 +555,7 @@ export default function App() {
                         }}
                       />
                     ) : (
-                      <span className="w-full h-full flex items-center justify-center text-sm text-slate-500">
+                      <span className="w-full h-full flex items-center justify-center text-sm text-slate-500 dark:text-slate-200">
                         {user?.name?.slice(0, 2)?.toUpperCase() || 'ME'}
                       </span>
                     )}
@@ -449,8 +573,8 @@ export default function App() {
                   ></span>
                 </span>
                 <span className="flex-1 min-w-0 text-left">
-                  <span className="block font-semibold text-sm truncate">{user?.name || 'Meu perfil'}</span>
-                  <span className="block text-xs text-slate-500 capitalize truncate">Status: {status}</span>
+                   <span className="block font-semibold text-sm truncate text-slate-900 dark:text-slate-100">{user?.name || 'Meu perfil'}</span>
+                   <span className="block text-xs text-slate-500 dark:text-slate-300 capitalize truncate">Status: {status}</span>
                 </span>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={`w-4 h-4 transition-transform ${menuOpen ? 'rotate-180' : ''}`}>
                   <path d="M12 15.75a.75.75 0 0 1-.53-.22l-4.5-4.5a.75.75 0 1 1 1.06-1.06L12 13.94l3.97-3.97a.75.75 0 0 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-.53.22Z" />
@@ -467,19 +591,3 @@ export default function App() {
     </div>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

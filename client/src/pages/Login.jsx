@@ -24,10 +24,18 @@ export default function Login() {
 
   useEffect(() => {
     try {
+      const storedTheme = localStorage.getItem("theme");
       const pref =
-        localStorage.getItem("theme") ||
-        (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      document.documentElement.classList.toggle("dark", pref === "dark");
+        storedTheme === "dark" || storedTheme === "light"
+          ? storedTheme
+          : matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+      const root = document.documentElement;
+      const body = document.body;
+      const isDark = pref === "dark";
+      root.classList.toggle("dark", isDark);
+      body.classList.toggle("dark", isDark);
       const saved = localStorage.getItem("rememberedEmail");
       if (saved) {
         setEmail(saved);
