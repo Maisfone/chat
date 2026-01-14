@@ -484,6 +484,7 @@ export default function Chat() {
     "favoritos",
     "caras",
     "gestos",
+    "diversidade",
     "amor",
     "natureza",
     "clima",
@@ -492,6 +493,10 @@ export default function Chat() {
     "objetos",
     "transportes",
   ];
+  const getEmojiRows = (list = []) => {
+    if (!Array.isArray(list) || list.length === 0) return [];
+    return Array.isArray(list[0]) ? list : [list];
+  };
   function scrollToEmojiTab(key) {
     setEmojiTab(key);
     try {
@@ -4675,36 +4680,45 @@ export default function Chat() {
                             : EMOJI_TABS.find((t) => t.key === key)?.label ||
                               key}
                         </div>
-                        <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
-                          {(key === "recent"
-                            ? recentEmojis
-                            : key === "favoritos"
-                            ? favoriteEmojis || []
-                            : EMOJI_CATS[key] || []
-                          ).map((e) => (
-                            <button
-                              key={`sec-${key}-${e}`}
-                              type="button"
-                              onClick={() => insertEmoji(e)}
-                              onContextMenu={(ev) => {
-                                ev.preventDefault();
-                                toggleFavEmoji(e);
-                              }}
-                              className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
-                                (favoriteEmojis || []).includes(e)
-                                  ? "bg-yellow-50"
-                                  : ""
-                              }`}
+                        {(() => {
+                          const list =
+                            key === "recent"
+                              ? recentEmojis
+                              : key === "favoritos"
+                              ? favoriteEmojis || []
+                              : EMOJI_CATS[key] || []
+                          const rows = getEmojiRows(list)
+                          return rows.map((row, rowIndex) => (
+                            <div
+                              key={`row-${key}-${rowIndex}`}
+                              className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2"
                             >
-                              {(favoriteEmojis || []).includes(e) && (
-                                <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
-                                  ★
-                                </span>
-                              )}
-                              {e}
-                            </button>
-                          ))}
-                        </div>
+                              {row.map((e) => (
+                                <button
+                                  key={`sec-${key}-${rowIndex}-${e}`}
+                                  type="button"
+                                  onClick={() => insertEmoji(e)}
+                                  onContextMenu={(ev) => {
+                                    ev.preventDefault()
+                                    toggleFavEmoji(e)
+                                  }}
+                                  className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
+                                    (favoriteEmojis || []).includes(e)
+                                      ? "bg-yellow-50"
+                                      : ""
+                                  }`}
+                                >
+                                  {(favoriteEmojis || []).includes(e) && (
+                                    <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
+                                      ★
+                                    </span>
+                                  )}
+                                  {e}
+                                </button>
+                              ))}
+                            </div>
+                          ))
+                        })()}
                       </div>
                     ))}
                 </div>
