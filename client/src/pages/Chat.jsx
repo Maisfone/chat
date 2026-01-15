@@ -97,6 +97,11 @@ function renderFormattedText(text) {
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_CONVERSATION_CACHE = 20;
 const MAX_MESSAGES_CACHE = 500;
+const IMAGE_PREVIEW_MIN_ZOOM = 0.5;
+const IMAGE_PREVIEW_MAX_ZOOM = 3;
+const IMAGE_PREVIEW_STEP = 0.25;
+const clampImageZoom = (value) =>
+  Math.min(IMAGE_PREVIEW_MAX_ZOOM, Math.max(IMAGE_PREVIEW_MIN_ZOOM, value));
 
 export default function Chat() {
   // Lists and active conversation
@@ -570,9 +575,30 @@ export default function Chat() {
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
   const [imagePreview, setImagePreview] = useState(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const updateImageZoom = useCallback((delta) => {
+    setImageZoom((prev) => clampImageZoom(prev + delta));
+  }, []);
   const closeImagePreview = useCallback(() => {
     setImagePreview(null);
+    setImageZoom(1);
   }, []);
+  const openImagePreview = useCallback(
+    (payload) => {
+      setImagePreview(payload);
+      setImageZoom(1);
+    },
+    []
+  );
+  const handleImageWheel = useCallback(
+    (event) => {
+      if (!imagePreview) return;
+      event.preventDefault();
+      const delta = event.deltaY < 0 ? IMAGE_PREVIEW_STEP : -IMAGE_PREVIEW_STEP;
+      updateImageZoom(delta);
+    },
+    [imagePreview, updateImageZoom]
+  );
 
   // Conversation menu (header)
   const [convMenuOpen, setConvMenuOpen] = useState(false);
@@ -3038,11 +3064,61 @@ export default function Chat() {
             >
               <IconX />
             </button>
-            <img
-              src={imagePreview.url}
-              alt={imagePreview.name || "imagem"}
-              className="max-h-[86vh] max-w-[88vw] rounded object-contain bg-slate-100"
-            />
+            <div
+              className="max-h-[86vh] max-w-[88vw] overflow-auto flex items-center justify-center"
+              onWheel={handleImageWheel}
+            >
+              <img
+                src={imagePreview.url}
+                alt={imagePreview.name || "imagem"}
+                className="rounded object-contain bg-slate-100"
+                style={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  width: "auto",
+                  height: "auto",
+                  transform: `scale(${imageZoom})`,
+                  transformOrigin: "center",
+                }}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              <span>
+                Zoom {Math.round(imageZoom * 100)}%
+                <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
+                  (Roda do mouse)
+                </span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => updateImageZoom(-IMAGE_PREVIEW_STEP)}
+                  disabled={imageZoom <= IMAGE_PREVIEW_MIN_ZOOM}
+                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
+                  aria-label="Diminuir zoom"
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImageZoom(1)}
+                  disabled={imageZoom === 1}
+                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
+                  aria-label="Resetar zoom"
+                >
+                  100%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateImageZoom(IMAGE_PREVIEW_STEP)}
+                  disabled={imageZoom >= IMAGE_PREVIEW_MAX_ZOOM}
+                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
+                  aria-label="Aumentar zoom"
+                >
+                  +
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -3827,7 +3903,7 @@ export default function Chat() {
                             <button
                               type="button"
                               onClick={() =>
-                                setImagePreview({
+                                openImagePreview({
                                   url: imageUrl,
                                   name: imageName,
                                 })
@@ -5207,7 +5283,7 @@ export default function Chat() {
                                 type="button"
                                 className="px-2 py-1 rounded border border-slate-300 hover:bg-slate-50"
                                 onClick={() =>
-                                  setImagePreview({
+                                  openImagePreview({
                                     url: absUrl(m.content),
                                     name: fileNameFromUrl(m.content) || "imagem",
                                   })
