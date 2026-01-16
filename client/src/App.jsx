@@ -571,7 +571,7 @@ export default function App() {
                     }`}
                   ></span>
                 </button>
-                {menuOpen && renderMenuPanel('fixed top-4 left-5')}
+                {menuOpen && renderMenuPanel('absolute left-full bottom-0 mb-2 ml-2')}
               </div>
               {avatarUploading && <span className="text-[10px] text-slate-500">Enviando...</span>}
               {avatarMsg && <span className="text-[10px] text-green-600 text-center max-w-[64px]">{avatarMsg}</span>}

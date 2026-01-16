@@ -51,6 +51,31 @@ async function resolveMentionUserIds({ groupId, authorId, content }) {
   return Array.from(ids)
 }
 
+function buildReactionSummary(records = [], viewerId) {
+  const map = new Map()
+  for (const record of records || []) {
+    const emoji = record?.emoji
+    if (!emoji) continue
+    const existing = map.get(emoji) || { emoji, count: 0, reactedByMe: false }
+    existing.count += 1
+    if (viewerId && record.userId === viewerId) existing.reactedByMe = true
+    map.set(emoji, existing)
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    return (a.emoji || '').localeCompare(b.emoji || '')
+  })
+}
+
+function attachReactionSummary(message, viewerId) {
+  if (!message) return message
+  const { reactions, ...rest } = message
+  return {
+    ...rest,
+    reactionSummary: buildReactionSummary(reactions, viewerId)
+  }
+}
+
 // Upload de arquivo (local ou S3)
 const upload = handleUploadSingle('file')
 
@@ -76,6 +101,8 @@ router.get('/favorites', async (req, res) => {
   }
 })
 
+export default router
+
 // Listar mensagens de um grupo (paginação simples)
 router.get('/:groupId', async (req, res) => {
   const { groupId } = req.params
@@ -99,10 +126,11 @@ router.get('/:groupId', async (req, res) => {
         }
       },
       _count: { select: { replies: true } },
-      reads: { select: { userId: true } }
+      reads: { select: { userId: true } },
+      reactions: { select: { emoji: true, userId: true } }
     }
   })
-  res.json(messages)
+  res.json(messages.map((m) => attachReactionSummary(m, req.user.id)))
 })
 
 // Enviar mensagem (texto ou URL)
@@ -126,7 +154,8 @@ router.post('/:groupId', async (req, res) => {
         data: { groupId, authorId: req.user.id, type, content, replyToId: replyToId || null },
         include: {
           author: { select: { id: true, name: true, avatarUrl: true } },
-          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+          reactions: { select: { emoji: true, userId: true } }
         }
       })
       if (mentionIds.length) {
@@ -141,25 +170,27 @@ router.post('/:groupId', async (req, res) => {
         include: {
           author: { select: { id: true, name: true, avatarUrl: true } },
           replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
-          mentions: { select: { userId: true } }
+          mentions: { select: { userId: true } },
+          reactions: { select: { emoji: true, userId: true } }
         }
       })
       return full || created
     })
-    req.io.to(groupId).emit('message:new', msg)
+    const normalizedMsg = attachReactionSummary(msg, req.user.id)
+    req.io.to(groupId).emit('message:new', normalizedMsg)
     const pushNotifications = async () => {
       try {
         const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
         const targets = members.map((m) => m.userId).filter((id) => id !== req.user.id)
-        const preview = msg.type === 'text'
-          ? msg.content
-          : (msg.type === 'image' ? 'Imagem' : msg.type === 'audio' ? 'Áudio' : 'Anexo')
+        const preview = normalizedMsg.type === 'text'
+          ? normalizedMsg.content
+          : (normalizedMsg.type === 'image' ? 'Imagem' : normalizedMsg.type === 'audio' ? 'Áudio' : 'Anexo')
         const mentionSet = new Set(mentionIds || [])
         const mentionTargets = targets.filter((id) => mentionSet.has(id))
         const otherTargets = targets.filter((id) => !mentionSet.has(id))
         if (mentionTargets.length) {
           await sendToUsers(mentionTargets, {
-            title: msg.author?.name || 'Mensagem',
+            title: normalizedMsg.author?.name || 'Mensagem',
             body: 'Você foi mencionado',
             tag: `group:${groupId}:mention`,
             data: { groupId, mention: true }
@@ -167,7 +198,7 @@ router.post('/:groupId', async (req, res) => {
         }
         if (otherTargets.length) {
           await sendToUsers(otherTargets, {
-            title: msg.author?.name || 'Mensagem',
+            title: normalizedMsg.author?.name || 'Mensagem',
             body: preview,
             tag: `group:${groupId}`,
             data: { groupId }
@@ -178,7 +209,7 @@ router.post('/:groupId', async (req, res) => {
       }
     }
     void pushNotifications()
-    res.status(201).json(msg)
+    res.status(201).json(normalizedMsg)
   } catch (e) {
     res.status(400).json({ error: 'Dados inválidos' })
   }
@@ -210,7 +241,8 @@ router.post('/:groupId/upload', upload, async (req, res) => {
       data: { groupId, authorId: req.user.id, type: storedType, content: contentUrl, replyToId },
       include: {
         author: { select: { id: true, name: true, avatarUrl: true } },
-        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+        replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+        reactions: { select: { emoji: true, userId: true } }
       }
     })
     await tx.group.update({ where: { id: groupId }, data: { lastMessageAt: created.createdAt } })
@@ -219,19 +251,21 @@ router.post('/:groupId/upload', upload, async (req, res) => {
       include: {
         author: { select: { id: true, name: true, avatarUrl: true } },
         replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
-        mentions: { select: { userId: true } }
+        mentions: { select: { userId: true } },
+        reactions: { select: { emoji: true, userId: true } }
       }
     })
     return full || created
   })
-  req.io.to(groupId).emit('message:new', msg)
+  const normalizedMsg = attachReactionSummary(msg, req.user.id)
+  req.io.to(groupId).emit('message:new', normalizedMsg)
   const pushNotifications = async () => {
     try {
       const members = await prisma.groupMember.findMany({ where: { groupId }, select: { userId: true } })
       const targets = members.map((m) => m.userId).filter((id) => id !== req.user.id)
       const body = kind === 'image' ? 'Imagem' : (kind === 'audio' ? 'Áudio' : 'Anexo')
       await sendToUsers(targets, {
-        title: msg.author?.name || 'Mensagem',
+        title: normalizedMsg.author?.name || 'Mensagem',
         body,
         tag: `group:${groupId}`,
         data: { groupId }
@@ -241,7 +275,7 @@ router.post('/:groupId/upload', upload, async (req, res) => {
     }
   }
   void pushNotifications()
-  res.status(201).json(msg)
+  res.status(201).json(normalizedMsg)
 })
 
 // Marcar mensagens do grupo como lidas para o usuário atual
@@ -285,7 +319,8 @@ router.patch('/:messageId', async (req, res) => {
         data: { content, editedAt: new Date() },
         include: {
           author: { select: { id: true, name: true, avatarUrl: true } },
-          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } }
+          replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
+          reactions: { select: { emoji: true, userId: true } }
         }
       })
       await tx.messageMention.deleteMany({ where: { messageId } })
@@ -300,15 +335,64 @@ router.patch('/:messageId', async (req, res) => {
         include: {
           author: { select: { id: true, name: true, avatarUrl: true } },
           replyTo: { select: { id: true, type: true, content: true, author: { select: { id: true, name: true } } } },
-          mentions: { select: { userId: true } }
+          mentions: { select: { userId: true } },
+          reactions: { select: { emoji: true, userId: true } }
         }
       })
       return full || next
     })
-    try { req.io.to(updated.groupId).emit('message:updated', updated) } catch {}
-    res.json(updated)
+    const normalizedUpdated = attachReactionSummary(updated, req.user.id)
+    try { req.io.to(normalizedUpdated.groupId).emit('message:updated', normalizedUpdated) } catch {}
+    res.json(normalizedUpdated)
   } catch (e) {
     res.status(400).json({ error: 'Falha ao editar mensagem' })
+  }
+})
+
+router.put('/:messageId/reaction', async (req, res) => {
+  const { messageId } = req.params
+  try {
+    const schema = z.object({ emoji: z.string().trim().min(1).max(12) })
+    const { emoji } = schema.parse(req.body)
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, groupId: true }
+    })
+    if (!message) return res.status(404).json({ error: 'Mensagem não encontrada' })
+    const member = await prisma.groupMember.findFirst({
+      where: { groupId: message.groupId, userId: req.user.id }
+    })
+    if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+    const reactions = await prisma.$transaction(async (tx) => {
+      const existing = await tx.messageReaction.findUnique({
+        where: { messageId_userId: { messageId, userId: req.user.id } },
+        select: { id: true, emoji: true }
+      })
+      if (existing) {
+        if (existing.emoji === emoji) {
+          await tx.messageReaction.delete({ where: { id: existing.id } })
+        } else {
+          await tx.messageReaction.update({
+            where: { id: existing.id },
+            data: { emoji }
+          })
+        }
+      } else {
+        await tx.messageReaction.create({
+          data: { messageId, userId: req.user.id, emoji }
+        })
+      }
+      return tx.messageReaction.findMany({
+        where: { messageId },
+        select: { emoji: true, userId: true }
+      })
+    })
+    const summary = buildReactionSummary(reactions, req.user.id)
+    const payload = { messageId, groupId: message.groupId, summary }
+    try { req.io.to(message.groupId).emit('message.reaction.updated', payload) } catch {}
+    res.json(payload)
+  } catch (e) {
+    res.status(400).json({ error: 'Falha ao reagir à mensagem' })
   }
 })
 // Apagar (soft-delete) mensagem do autor (ou admin)
@@ -329,7 +413,6 @@ router.delete('/:messageId', async (req, res) => {
   res.json({ ok: true, id: updated.id })
 })
 
-export default router
 // Favoritar mensagem
 router.post('/:messageId/favorite', async (req, res) => {
   const { messageId } = req.params

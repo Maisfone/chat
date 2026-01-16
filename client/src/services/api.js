@@ -60,6 +60,15 @@ export const api = {
       },
       body: JSON.stringify(body),
     }).then(handleAuth),
+  put: (path, body) =>
+    fetch(`${API_BASE}${path}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+      },
+      body: JSON.stringify(body),
+    }).then(handleAuth),
   patch: (path, body) =>
     fetch(`${API_BASE}${path}`, {
       method: "PATCH",

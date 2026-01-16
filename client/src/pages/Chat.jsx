@@ -102,6 +102,46 @@ const IMAGE_PREVIEW_MAX_ZOOM = 3;
 const IMAGE_PREVIEW_STEP = 0.25;
 const clampImageZoom = (value) =>
   Math.min(IMAGE_PREVIEW_MAX_ZOOM, Math.max(IMAGE_PREVIEW_MIN_ZOOM, value));
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+function sortReactionSummaryList(items = []) {
+  return [...items].sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return (a.emoji || "").localeCompare(b.emoji || "");
+  });
+}
+
+function computeOptimisticReactionSummary(current = [], userEmoji, targetEmoji) {
+  const map = new Map(
+    (current || []).map((item) => [item.emoji, { ...item }])
+  );
+  const removeEntry = (emoji) => {
+    if (!emoji) return;
+    const existing = map.get(emoji);
+    if (!existing) return;
+    existing.count -= 1;
+    existing.reactedByMe = false;
+    if (existing.count <= 0) {
+      map.delete(emoji);
+    } else {
+      map.set(emoji, existing);
+    }
+  };
+  if (userEmoji === targetEmoji) {
+    removeEntry(userEmoji);
+  } else {
+    removeEntry(userEmoji);
+    const updated = map.get(targetEmoji) || {
+      emoji: targetEmoji,
+      count: 0,
+      reactedByMe: false,
+    };
+    updated.count += 1;
+    updated.reactedByMe = true;
+    map.set(targetEmoji, updated);
+  }
+  return sortReactionSummaryList(Array.from(map.values()));
+}
 
 export default function Chat() {
   // Lists and active conversation
@@ -299,6 +339,7 @@ export default function Chat() {
   const [convQuery, setConvQuery] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const emojiBtnRef = useRef(null);
+  const emojiPopoverRef = useRef(null);
   // Posição inicial de fallback para o popover (caso cálculo ainda não tenha ocorrido)
   const [emojiPos, setEmojiPos] = useState({
     left: 4,
@@ -343,6 +384,22 @@ export default function Chat() {
     } catch {}
     setShowEmoji(true);
   }
+  useEffect(() => {
+    if (!showEmoji) return undefined;
+    const handleClickOutside = (event) => {
+      const target = event.target;
+      if (
+        target &&
+        (emojiPopoverRef.current?.contains(target) ||
+          emojiBtnRef.current?.contains(target))
+      ) {
+        return;
+      }
+      setShowEmoji(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showEmoji]);
   // Sidebar context menu (right-click)
   const [sideMenu, setSideMenu] = useState({
     open: false,
@@ -571,6 +628,8 @@ export default function Chat() {
   const recAudioRef = useRef(null);
   const recStartedAtRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
+  const [reactionPickerFor, setReactionPickerFor] = useState(null);
+  const reactionPopoverRef = useRef(null);
   const [recPreviewDuration, setRecPreviewDuration] = useState("");
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
@@ -1454,6 +1513,48 @@ export default function Chat() {
     } catch (e) {}
   }
 
+  const handleReactionSelect = useCallback(
+    async (message, emoji) => {
+      if (!message?.id || !emoji || !user?.id) return;
+      const messageId = message.id;
+      const previousSummary = (message.reactionSummary || []).map((item) => ({
+        ...item,
+      }));
+      const userEmoji = previousSummary.find((entry) => entry.reactedByMe)?.emoji;
+      const optimisticSummary = computeOptimisticReactionSummary(
+        previousSummary,
+        userEmoji,
+        emoji
+      );
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, reactionSummary: optimisticSummary } : m
+        )
+      );
+      setReactionPickerFor(null);
+      setErr("");
+      try {
+        const result = await api.put(`/messages/${messageId}/reaction`, { emoji });
+        const serverSummary = result?.summary || [];
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, reactionSummary: serverSummary } : m
+          )
+        );
+      } catch (error) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, reactionSummary: previousSummary }
+              : m
+          )
+        );
+        setErr(error?.message || "Falha ao reagir à mensagem");
+      }
+    },
+    [setMessages, setErr, setReactionPickerFor, user?.id]
+  );
+
   // Map: groupId -> otherUserId (for DMs)
   const dmOtherByGroupId = useMemo(() => {
     const map = {};
@@ -2127,6 +2228,16 @@ export default function Chat() {
           setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
         }
       };
+      const onReactionUpdated = (payload) => {
+        if (payload?.groupId !== currentId || !payload?.messageId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === payload.messageId
+              ? { ...m, reactionSummary: payload.summary || [] }
+              : m
+          )
+        );
+      };
       const onReads = (payload) => {
         try {
           if (!payload || payload.groupId !== currentId) return;
@@ -2157,12 +2268,15 @@ export default function Chat() {
       };
       s.on("message:new", onNew);
       s.on("message:updated", onUpdated);
+      s.on("message.reaction.updated", onReactionUpdated);
       s.on("messages:read", onReads);
       s.on("message:deleted", onDeleted);
       unsub = () => {
         setMenuFor(null);
+        setReactionPickerFor(null);
         s.off("message:new", onNew);
         s.off("message:updated", onUpdated);
+        s.off("message.reaction.updated", onReactionUpdated);
         s.off("messages:read", onReads);
         s.off("message:deleted", onDeleted);
         s.emit("group:leave", currentId);
@@ -2179,6 +2293,39 @@ export default function Chat() {
       } catch {}
     }
   }, [active?.id]);
+
+  useEffect(() => {
+    setReactionPickerFor(null);
+  }, [active?.id]);
+
+  useEffect(() => {
+    if (!reactionPickerFor) return;
+    const handleClick = (event) => {
+      const target = event.target;
+      const clickedButton =
+        target instanceof Element
+          ? target.closest("[data-reaction-button]")
+          : null;
+      if (
+        clickedButton?.getAttribute("data-reaction-button") ===
+        reactionPickerFor
+      ) {
+        return;
+      }
+      if (
+        reactionPopoverRef.current &&
+        target instanceof Node &&
+        reactionPopoverRef.current.contains(target)
+      ) {
+        return;
+      }
+      setReactionPickerFor(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [reactionPickerFor]);
 
   useEffect(() => {
     scrollToBottom();
@@ -3766,17 +3913,17 @@ export default function Chat() {
               )}
               {messages.map((m, i) => {
                 const mine = (m.author?.id || m.authorId) === user?.id;
-                const bubbleClass = mine
-                  ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
-                  : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
-                const lineClass = mine
-                  ? "flex justify-end mb-2 items-end min-w-0"
-                  : "flex justify-start mb-2 items-end min-w-0";
-                const prev = messages[i - 1];
-            const showDate =
-              !prev ||
-              new Date(prev.createdAt).toDateString() !==
-                new Date(m.createdAt).toDateString();
+              const bubbleClass = mine
+                ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
+                : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
+              const lineClass = mine
+                ? "flex justify-end mb-2 items-end gap-1"
+                : "flex justify-start mb-2 items-end gap-1";
+              const prev = messages[i - 1];
+              const showDate =
+                !prev ||
+                new Date(prev.createdAt).toDateString() !==
+                  new Date(m.createdAt).toDateString();
             const dateLabel = (() => {
               const date = new Date(m.createdAt);
               const now = new Date();
@@ -3787,9 +3934,65 @@ export default function Chat() {
               if (diff === -1) return "Ontem";
               return date.toLocaleDateString("pt-BR");
             })();
-            const showManualDivider =
-              manualUnreadMarker?.messageId === m.id && !!active?.id;
-            return (
+              const showManualDivider =
+                manualUnreadMarker?.messageId === m.id && !!active?.id;
+              const myReactionEmoji = (
+                m.reactionSummary || []
+              ).find((entry) => entry.reactedByMe)?.emoji;
+              const reactionButtonLabel = myReactionEmoji || "🙂";
+              const reactionButtonActive = Boolean(myReactionEmoji);
+              const popoverPlacementClass = mine
+                ? "right-full -mr-2"
+                : "left-full ml-2";
+              const reactionButtonVisible =
+                reactionButtonActive || reactionPickerFor === m.id;
+              const reactionButtonElement = (
+                <div className="relative flex items-center">
+                  <button
+                    type="button"
+                    data-reaction-button={m.id}
+                    onClick={() =>
+                      setReactionPickerFor((prev) =>
+                        prev === m.id ? null : m.id
+                      )
+                    }
+                    title={
+                      reactionButtonActive
+                        ? "Alterar reação"
+                        : "Reagir com emoji"
+                    }
+                    className={`h-7 w-7 flex items-center justify-center rounded-full shadow transition duration-150 text-base ${
+                      reactionButtonActive
+                        ? "text-blue-600"
+                        : "text-slate-600"
+                    } ${
+                      reactionButtonVisible
+                        ? "opacity-100 pointer-events-auto"
+                        : "opacity-0 pointer-events-none"
+                    } group-hover:opacity-100 group-hover:pointer-events-auto`}
+                  >
+                    {reactionButtonLabel}
+                  </button>
+                  {reactionPickerFor === m.id && (
+                  <div
+                    ref={reactionPopoverRef}
+                    className={`absolute -top-12 z-20 flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900 ${popoverPlacementClass}`}
+                  >
+                      {QUICK_REACTIONS.map((emoji) => (
+                        <button
+                          type="button"
+                          key={emoji}
+                          onClick={() => handleReactionSelect(m, emoji)}
+                          className="rounded-full px-2 py-1 text-base leading-none transition hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+              return (
               <div key={m.id} id={`msg-${m.id}`} className="w-full">
                 {showDate && (
                   <div className="max-w-32 mx-auto rounded-full text-center text-xs bg-sky-600  text-slate-100 my-2">
@@ -3820,6 +4023,7 @@ export default function Chat() {
                       />
                     </div>
                   )}
+                  {mine && reactionButtonElement}
                   <div
                     className={`${bubbleClass} ${
                       highlightId === m.id ? "ring-2 ring-yellow-400" : ""
@@ -3996,6 +4200,7 @@ export default function Chat() {
                       </button>
                     </div>
                   </div>
+                  {!mine && reactionButtonElement}
                   <div
                     className="ml-1 relative"
                     ref={menuFor === m.id ? setMessageMenuContainer : null}
@@ -4003,7 +4208,10 @@ export default function Chat() {
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-700"
-                      onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}
+                      onClick={() => {
+                        setReactionPickerFor(null);
+                        setMenuFor(menuFor === m.id ? null : m.id);
+                      }}
                       aria-label="AÃ§Ãµes"
                     >
                       ...
@@ -4347,7 +4555,11 @@ export default function Chat() {
           )}
           {mentionOpen && mentionSuggestions.length > 0 && (
             <div
-              className="absolute bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+              className={`absolute bottom-16 z-20 rounded-xl border shadow-lg ${
+                isChatDark
+                  ? "border-slate-700 bg-slate-900/90 text-slate-100"
+                  : "border-slate-200 bg-white text-slate-900"
+              }`}
               style={{
                 left: mentionPosition?.left ?? 12,
                 width: mentionPosition?.width ?? "auto",
@@ -4356,17 +4568,21 @@ export default function Chat() {
               <div className="max-h-52 overflow-y-auto py-1">
                 {mentionSuggestions.map((m, idx) => {
                   const member = m.user || m;
-                  const selected = idx === mentionIndex;
-                  return (
-                    <button
-                      key={member.id || idx}
-                      type="button"
-                      onClick={() => applyMention(member)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
-                        selected
-                          ? "bg-blue-50 text-blue-700 dark:bg-slate-700 dark:text-slate-100"
-                          : "hover:bg-slate-50 dark:hover:bg-slate-800"
-                      }`}
+                      const selected = idx === mentionIndex;
+                      return (
+                        <button
+                          key={member.id || idx}
+                          type="button"
+                          onClick={() => applyMention(member)}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
+                            selected
+                              ? isChatDark
+                                ? "bg-slate-700 text-slate-100"
+                                : "bg-blue-50 text-blue-700"
+                              : isChatDark
+                              ? "hover:bg-slate-800 text-slate-200"
+                              : "hover:bg-slate-50 text-slate-900"
+                          }`}
                     >
                       <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
                         {member?.avatarUrl ? (
@@ -4616,6 +4832,7 @@ export default function Chat() {
 
           {showEmoji && (
             <div
+              ref={emojiPopoverRef}
               className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden"
               style={{
                 left: Math.max(4, emojiPos.left),

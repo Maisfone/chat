@@ -26,6 +26,7 @@ model User {
   memberships GroupMember[]
   reads      MessageRead[]
   mentions   MessageMention[]
+  reactions  MessageReaction[]
 
   // Back-relations para DMs
   directThreadsA DirectThread[] @relation("DirectUserA")
@@ -93,6 +94,7 @@ model Message {
 
   reads      MessageRead[]
   mentions   MessageMention[]
+  reactions  MessageReaction[]
 
   // Reply-to self relation
   replyTo    Message?    @relation("MessageReply", fields: [replyToId], references: [id])
@@ -140,6 +142,20 @@ model MessageFavorite {
 
   @@unique([messageId, userId])
   @@index([userId])
+}
+
+model MessageReaction {
+  id         String   @id @default(uuid())
+  message    Message  @relation(fields: [messageId], references: [id])
+  messageId  String   @map("message_id")
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String   @map("user_id")
+  emoji      String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@index([messageId])
 }
 
 // Conversas diretas (1:1) representam um grupo privado com exatamente 2 membros
