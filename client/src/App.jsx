@@ -513,10 +513,16 @@ export default function App() {
           </div>
           {user?.isAdmin && (
             <div className="relative group">
-              <Link title="Admin" className={navLinkClass('/admin')} to="/admin">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={`${iconSizeClass}`}><path d="M12 2.25 3.75 6v5.25c0 5.108 3.66 9.837 8.625 10.5 4.965-.663 8.625-5.392 8.625-10.5V6L12 2.25Zm0 5.25a2.25 2.25 0 1 1 0 4.5 2.25 0 0 1 0-4.5Zm0 12a7.5 7.5 0 0 1-6-3.09c.03-1.982 4.5-3.06 6-3.06s5.97 1.078 6 3.06A7.5 7.5 0 0 1 12 19.5Z"/></svg>
-                {!mini && <span>Admin</span>}
-              </Link>
+            <Link title="Admin" className={navLinkClass('/admin')} to="/admin">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={`${iconSizeClass}`}>
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M12.516 2.17a.75.75 0 0 0-1.032 0 11.209 11.209 0 0 1-7.877 3.08.75.75 0 0 0-.722.515A12.74 12.74 0 0 0 2.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 0 0 .374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 0 0-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08zm3.094 8.016a.75.75 0 1 0-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.14-.094l3.75-5.25z"
+                />
+              </svg>
+              {!mini && <span>Admin</span>}
+            </Link>
               {mini && (
                 <span className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-xs rounded px-2 py-1 shadow z-50 whitespace-nowrap dark:bg-slate-700">Admin</span>
               )}

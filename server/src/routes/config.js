@@ -2,6 +2,7 @@ import express from 'express'
 import { authRequired, adminRequired } from '../middleware/auth.js'
 import { handleUploadSingle } from '../lib/storage.js'
 import { publicConfig, readConfig, updateConfig } from '../lib/config.js'
+import { resetTransporter, verifySmtpConfig } from '../lib/mailer.js'
 
 const router = express.Router()
 
@@ -21,6 +22,32 @@ function pickString(value) {
     return trimmed.length ? trimmed : null
   }
   return null
+}
+
+function parsePort(value) {
+  if (value === undefined || value === null || value === '') return null
+  const normalized = typeof value === 'string' ? value.trim() : value
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return undefined
+  return Math.round(parsed)
+}
+
+function parseBoolean(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'boolean') return value
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false
+  return null
+}
+
+function sanitizeConfigForAdmin(cfg) {
+  const next = { ...cfg }
+  const smtp = cfg.smtp ? { ...cfg.smtp } : null
+  const hasPassword = Boolean(cfg.smtp?.password)
+  if (smtp) delete smtp.password
+  next.smtp = smtp
+  return { ...next, smtpPasswordSet: hasPassword }
 }
 
 function currentAlertSound(cfg) {
@@ -46,7 +73,7 @@ function broadcastChatIcon(req, url) {
 
 // Admin: full config
 router.get('/', adminRequired, (req, res) => {
-  res.json(readConfig())
+  res.json(sanitizeConfigForAdmin(readConfig()))
 })
 
 // Admin: patch simple fields
@@ -64,11 +91,12 @@ router.patch('/', adminRequired, (req, res) => {
     patch.activeAlertSoundId = id || null
   }
   const cfg = updateConfig(patch)
+  const sanitized = sanitizeConfigForAdmin(cfg)
   broadcastAlertSound(req, cfg)
   if (Object.prototype.hasOwnProperty.call(patch, 'chatIconUrl')) {
     broadcastChatIcon(req, cfg.chatIconUrl || null)
   }
-  res.json(cfg)
+  res.json(sanitized)
 })
 
 // Admin: upload icon and persist URL
@@ -210,6 +238,54 @@ router.post('/alert-sounds/:id/activate', adminRequired, (req, res) => {
     })
   } catch (e) {
     res.status(500).json({ error: 'Falha ao atualizar som ativo' })
+  }
+})
+
+router.patch('/email', adminRequired, (req, res) => {
+  try {
+    const current = readConfig()
+    const smtp = { ...(current.smtp || {}) }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'host')) {
+      smtp.host = pickString(req.body.host)
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'user')) {
+      smtp.user = pickString(req.body.user)
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'from')) {
+      smtp.from = pickString(req.body.from)
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'password')) {
+      smtp.password = pickString(req.body.password)
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'port')) {
+      const parsed = parsePort(req.body.port)
+      if (parsed === undefined) {
+        return res.status(400).json({ error: 'Porta inválida' })
+      }
+      smtp.port = parsed
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'secure')) {
+      const boolValue = parseBoolean(req.body.secure)
+      if (boolValue === null) {
+        return res.status(400).json({ error: 'Valor inválido para seguro' })
+      }
+      smtp.secure = boolValue
+    }
+    const cfg = updateConfig({ smtp })
+    resetTransporter()
+    res.json(sanitizeConfigForAdmin(cfg))
+  } catch (err) {
+    res.status(400).json({ error: 'Falha ao salvar configurações de e-mail' })
+  }
+})
+
+router.post('/email/test', adminRequired, async (req, res) => {
+  try {
+    await verifySmtpConfig()
+    res.json({ ok: true })
+  } catch (err) {
+    const message = err?.message || 'Falha ao validar SMTP'
+    res.status(400).json({ error: message })
   }
 })
 

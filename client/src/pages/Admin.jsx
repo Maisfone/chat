@@ -107,6 +107,15 @@ export default function Admin() {
   const [soundDeletingId, setSoundDeletingId] = useState('')
   const soundInputRef = useRef(null)
   const previewAudioRef = useRef(null)
+  const [smtpHost, setSmtpHost] = useState('')
+  const [smtpPort, setSmtpPort] = useState('')
+  const [smtpSecure, setSmtpSecure] = useState(false)
+  const [smtpUser, setSmtpUser] = useState('')
+  const [smtpFrom, setSmtpFrom] = useState('')
+  const [smtpPassword, setSmtpPassword] = useState('')
+  const [smtpPasswordSet, setSmtpPasswordSet] = useState(false)
+  const [emailSaving, setEmailSaving] = useState(false)
+  const [smtpTesting, setSmtpTesting] = useState(false)
   const defaultBackupSettings = useMemo(() => ({
     autoEnabled: false,
     time: '02:00',
@@ -162,6 +171,13 @@ export default function Admin() {
       setAlertSounds(list)
       setActiveAlertSoundId(cfg?.activeAlertSoundId || null)
       syncGlobalSound(list, cfg?.activeAlertSoundId || null)
+      setSmtpHost(cfg?.smtp?.host || '')
+      setSmtpPort(cfg?.smtp?.port ? String(cfg.smtp.port) : '')
+      setSmtpSecure(cfg?.smtp?.secure ?? false)
+      setSmtpUser(cfg?.smtp?.user || '')
+      setSmtpFrom(cfg?.smtp?.from || '')
+      setSmtpPassword('')
+      setSmtpPasswordSet(!!cfg?.smtpPasswordSet)
     } catch (e) {
       if (!silent) showToast(e.message || 'Falha ao carregar configurações', 'error')
     }
@@ -304,6 +320,41 @@ export default function Admin() {
       try { localStorage.removeItem('chat_wallpaper'); document.documentElement.style.removeProperty('--chat-wallpaper'); window.dispatchEvent(new Event('chat:wallpaperUpdated')) } catch {}
       showToast('Papel de parede global excluído', 'success')
     } catch(e){ showToast(e.message||'Falha ao excluir papel de parede', 'error') }
+  }
+
+  async function saveEmailConfig(){
+    if (emailSaving) return
+    setEmailSaving(true)
+    try {
+      const payload = {
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        user: smtpUser,
+        from: smtpFrom,
+      }
+      if (smtpPassword) payload.password = smtpPassword
+      await api.patch('/admin/config/email', payload)
+      await loadAdminConfig({ silent: true })
+      showToast('Configurações de e-mail salvas', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao salvar e-mail', 'error')
+    } finally {
+      setEmailSaving(false)
+    }
+  }
+
+  async function testEmailConfig(){
+    if (smtpTesting) return
+    setSmtpTesting(true)
+    try {
+      await api.post('/admin/config/email/test', {})
+      showToast('SMTP verificado com sucesso', 'success')
+    } catch (e) {
+      showToast(e.message || 'Falha ao verificar SMTP', 'error')
+    } finally {
+      setSmtpTesting(false)
+    }
   }
 
   const loadBackups = useCallback(async () => {
@@ -1303,10 +1354,78 @@ export default function Admin() {
                 ) : (
                   <div className="mt-3 text-sm text-slate-500">Nenhum som cadastrado ainda.</div>
                 )}
-                <div className="mt-3">
-                  <button type="button" className="text-xs text-slate-600 underline disabled:opacity-60" onClick={()=>activateSound(null)} disabled={!activeAlertSoundId}>Usar bip padrão</button>
-                </div>
+              <div className="mt-3">
+                <button type="button" className="text-xs text-slate-600 underline disabled:opacity-60" onClick={()=>activateSound(null)} disabled={!activeAlertSoundId}>Usar bip padrão</button>
               </div>
+            </div>
+            <div className="md:col-span-3 p-4 rounded border border-slate-200 bg-slate-50/60 space-y-3">
+              <h4 className="font-medium">E-mail</h4>
+              <p className="text-xs text-slate-500">Configurações SMTP utilizadas para enviar a nova senha de login ao recuperar a conta.</p>
+              <div className="grid gap-3 md:grid-cols-3">
+                <input
+                  className="border rounded px-3 py-2"
+                  placeholder="Servidor SMTP (host)"
+                  value={smtpHost}
+                  onChange={e=>setSmtpHost(e.target.value)}
+                />
+                <input
+                  className="border rounded px-3 py-2"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  placeholder="Porta"
+                  value={smtpPort}
+                  onChange={e=>setSmtpPort(e.target.value)}
+                />
+                <input
+                  className="border rounded px-3 py-2"
+                  placeholder="Remetente (from)"
+                  value={smtpFrom}
+                  onChange={e=>setSmtpFrom(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <input
+                  className="border rounded px-3 py-2"
+                  placeholder="Usuário SMTP (opcional)"
+                  value={smtpUser}
+                  onChange={e=>setSmtpUser(e.target.value)}
+                />
+                <input
+                  className="border rounded px-3 py-2"
+                  type="password"
+                  placeholder="Senha SMTP (deixe em branco para manter)"
+                  value={smtpPassword}
+                  onChange={e=>setSmtpPassword(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" className="rounded border-slate-300" checked={smtpSecure} onChange={e=>setSmtpSecure(e.target.checked)} />
+                  Usar TLS/SSL (STARTTLS/SMTPS)
+                </label>
+                {smtpPasswordSet && <span className="text-xs text-slate-500">Senha já configurada</span>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-60"
+                  onClick={saveEmailConfig}
+                  disabled={emailSaving}
+                >
+                  {emailSaving ? 'Salvando...' : 'Salvar e-mail'}
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  onClick={testEmailConfig}
+                  disabled={smtpTesting}
+                >
+                  {smtpTesting ? 'Verificando...' : 'Verificar SMTP'}
+                </button>
+                <span className="text-xs text-slate-500">As alterações afetarão o envio da recuperação de senha.</span>
+              </div>
+            </div>
             </div>
           </div>
 

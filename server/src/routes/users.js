@@ -176,6 +176,7 @@ async function deleteGroupAndDependencies(tx, groupId) {
     await tx.messageMention.deleteMany({ where: { messageId: { in: messageIds } } })
     await tx.messageRead.deleteMany({ where: { messageId: { in: messageIds } } })
     await tx.messageFavorite.deleteMany({ where: { messageId: { in: messageIds } } })
+    await tx.messageReaction.deleteMany({ where: { messageId: { in: messageIds } } })
     await tx.message.deleteMany({ where: { id: { in: messageIds } } })
   }
   await tx.groupMember.deleteMany({ where: { groupId } })
@@ -195,6 +196,8 @@ async function deleteMessagesByAuthor(tx, authorId) {
   await tx.messageMention.deleteMany({ where: { messageId: { in: messageIds } } })
   await tx.messageRead.deleteMany({ where: { messageId: { in: messageIds } } })
   await tx.messageFavorite.deleteMany({ where: { messageId: { in: messageIds } } })
+  await tx.messageReaction.deleteMany({ where: { messageId: { in: messageIds } } })
+  await tx.message.updateMany({ where: { replyToId: { in: messageIds } }, data: { replyToId: null } })
   await tx.message.deleteMany({ where: { id: { in: messageIds } } })
 }
 
@@ -229,8 +232,11 @@ router.delete('/:id', adminRequired, async (req, res) => {
         await tx.meeting.deleteMany({ where: { id: { in: meetingIds } } })
       }
 
+      await tx.meetingParticipant.deleteMany({ where: { userId: id } })
+
       await tx.directThread.deleteMany({ where: { OR: [{ userAId: id }, { userBId: id }] } })
       await tx.sipAccount.deleteMany({ where: { userId: id } })
+      await tx.messageReaction.deleteMany({ where: { userId: id } })
 
       await tx.user.delete({ where: { id } })
     })

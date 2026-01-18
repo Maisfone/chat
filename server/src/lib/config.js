@@ -10,6 +10,40 @@ function ensureDir() {
   } catch {}
 }
 
+function normalizeNullableString(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length ? trimmed : null
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return null
+}
+
+function normalizeSmtp(raw = {}) {
+  const smtp = typeof raw === 'object' && raw ? { ...raw } : {}
+  smtp.host = normalizeNullableString(smtp.host)
+  smtp.user = normalizeNullableString(smtp.user)
+  smtp.from = normalizeNullableString(smtp.from)
+  smtp.password = normalizeNullableString(smtp.password)
+  const portValue = smtp.port
+  if (portValue === null || portValue === undefined || portValue === '') {
+    smtp.port = null
+  } else {
+    const parsed = Number(portValue)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      smtp.port = Math.min(65535, Math.max(1, Math.round(parsed)))
+    } else {
+      smtp.port = null
+    }
+  }
+  const hasSecure = Object.prototype.hasOwnProperty.call(raw, 'secure')
+  smtp.secure = hasSecure ? Boolean(smtp.secure) : null
+  return smtp
+}
+
 function normalizeConfig(cfg = {}) {
   const next = { ...cfg }
   next.chatIconUrl = typeof next.chatIconUrl === 'string' && next.chatIconUrl.trim() ? next.chatIconUrl : null
@@ -21,6 +55,7 @@ function normalizeConfig(cfg = {}) {
     next.activeAlertSoundId = next.alertSounds[0]?.id || null
   }
   next.backup = normalizeBackup(next.backup)
+  next.smtp = normalizeSmtp(next.smtp)
   return next
 }
 

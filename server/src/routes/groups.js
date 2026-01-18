@@ -43,11 +43,14 @@ router.get('/', async (req, res) => {
 // Admin: listar todos os grupos
 router.get('/all', adminRequired, async (req, res) => {
   const includeDMs = String(req.query.includeDMs || 'false').toLowerCase() === 'true'
+
   const groups = await prisma.group.findMany({
-    where: includeDMs ? {} : { directThread: { is: null } },
-    orderBy: { lastMessageAt: 'desc' }
+    orderBy: { lastMessageAt: 'desc' },
+    include: { directThread: true }
   })
-  res.json(groups)
+
+  const filtered = includeDMs ? groups : groups.filter((g) => !g.directThread)
+  res.json(filtered.map(({ directThread, ...g }) => g))
 })
 
 // Participantes de um grupo (visível aos membros)
