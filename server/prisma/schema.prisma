@@ -19,6 +19,9 @@ model User {
   address    String?  @map("address")
   isBlocked  Boolean  @default(false) @map("is_blocked")
   isAdmin    Boolean  @default(false) @map("is_admin")
+  passwordChangedAt    DateTime? @map("password_changed_at")
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 

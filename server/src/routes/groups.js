@@ -1,4 +1,4 @@
-﻿import express from 'express'
+import express from 'express'
 import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { adminRequired, authRequired } from '../middleware/auth.js'
@@ -8,36 +8,48 @@ const router = express.Router()
 
 router.use(authRequired)
 
-// Listar grupos do usuÃ¡rio
+// Listar grupos do usuário
 router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
     where: { members: { some: { userId: me } }, directThread: { is: null } },
     orderBy: { lastMessageAt: 'desc' }
   })
-  // Anexa contagem de nÃ£o lidas
-  const withUnread = await Promise.all(groups.map(async (g) => {
-    const unread = await prisma.message.count({
-      where: {
-        groupId: g.id,
-        deletedAt: null,
-        authorId: { not: me },
-        reads: { none: { userId: me } }
-      }
-    })
-    const mentions = await prisma.messageMention.count({
-      where: {
-        userId: me,
-        message: {
-          groupId: g.id,
-          deletedAt: null,
-          reads: { none: { userId: me } }
-        }
-      }
-    })
-    return { ...g, _unread: unread, _mentions: mentions }
-  }))
-  res.json(withUnread)
+  // Anexa contagem de não lidas
+  // Duas consultas no total (em vez de duas por grupo)
+  const groupIds = groups.map((g) => g.id)
+  const [unreadRows, mentionRows] = groupIds.length
+    ? await Promise.all([
+        prisma.message.groupBy({
+          by: ['groupId'],
+          where: {
+            groupId: { in: groupIds },
+            deletedAt: null,
+            authorId: { not: me },
+            reads: { none: { userId: me } }
+          },
+          _count: { _all: true }
+        }),
+        prisma.messageMention.findMany({
+          where: {
+            userId: me,
+            message: {
+              groupId: { in: groupIds },
+              deletedAt: null,
+              reads: { none: { userId: me } }
+            }
+          },
+          select: { message: { select: { groupId: true } } }
+        })
+      ])
+    : [[], []]
+  const unreadMap = new Map(unreadRows.map((r) => [r.groupId, r._count._all]))
+  const mentionMap = new Map()
+  for (const row of mentionRows) {
+    const gid = row.message?.groupId
+    if (gid) mentionMap.set(gid, (mentionMap.get(gid) || 0) + 1)
+  }
+  res.json(groups.map((g) => ({ ...g, _unread: unreadMap.get(g.id) || 0, _mentions: mentionMap.get(g.id) || 0 })))
 })
 
 // Admin: listar todos os grupos
@@ -76,7 +88,7 @@ router.post('/', adminRequired, async (req, res) => {
     const group = await prisma.group.create({ data: { name, isPrivate: !!isPrivate } })
     res.status(201).json(group)
   } catch (e) {
-    res.status(400).json({ error: 'Dados invÃ¡lidos' })
+    res.status(400).json({ error: 'Dados inválidos' })
   }
 })
 
@@ -89,7 +101,7 @@ router.post('/:groupId/members', adminRequired, async (req, res) => {
     const member = await prisma.groupMember.create({ data: { groupId, userId, role: role || 'member' } })
     res.status(201).json(member)
   } catch (e) {
-    res.status(400).json({ error: 'Dados invÃ¡lidos ou membro jÃ¡ existe' })
+    res.status(400).json({ error: 'Dados inválidos ou membro já existe' })
   }
 })
 
@@ -99,7 +111,7 @@ router.delete('/:groupId/members/:userId', adminRequired, async (req, res) => {
     await prisma.groupMember.delete({ where: { groupId_userId: { groupId, userId } } })
     res.status(204).send()
   } catch {
-    res.status(404).json({ error: 'Membro nÃ£o encontrado' })
+    res.status(404).json({ error: 'Membro não encontrado' })
   }
 })
 
@@ -127,7 +139,7 @@ router.patch('/:groupId', adminRequired, async (req, res) => {
 })
 
 // Atualizar avatar do grupo (local ou S3)
-const upload = handleUploadSingle('avatar')
+const upload = handleUploadSingle('avatar', { accept: 'image' })
 router.patch('/:groupId/avatar', adminRequired, upload, async (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
@@ -138,7 +150,7 @@ router.patch('/:groupId/avatar', adminRequired, upload, async (req, res) => {
   }
 })
 
-// Admin: excluir grupo e dependÃªncias
+// Admin: excluir grupo e dependências
 router.delete('/:groupId', adminRequired, async (req, res) => {
   const groupId = req.params.groupId
   try {
@@ -148,6 +160,9 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
       if (ids.length) {
         await tx.messageMention.deleteMany({ where: { messageId: { in: ids } } })
         await tx.messageRead.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.messageFavorite.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.messageReaction.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.message.updateMany({ where: { replyToId: { in: ids } }, data: { replyToId: null } })
         await tx.message.deleteMany({ where: { id: { in: ids } } })
       }
       await tx.groupMember.deleteMany({ where: { groupId } })

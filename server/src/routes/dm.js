@@ -17,18 +17,24 @@ router.get('/', async (req, res) => {
     },
     orderBy: { group: { lastMessageAt: 'desc' } }
   })
-  const data = await Promise.all(threads.map(async (t) => {
+  const groupIds = threads.map((t) => t.groupId)
+  const unreadRows = groupIds.length
+    ? await prisma.message.groupBy({
+        by: ['groupId'],
+        where: {
+          groupId: { in: groupIds },
+          deletedAt: null,
+          authorId: { not: me },
+          reads: { none: { userId: me } }
+        },
+        _count: { _all: true }
+      })
+    : []
+  const unreadMap = new Map(unreadRows.map((r) => [r.groupId, r._count._all]))
+  const data = threads.map((t) => {
     const other = t.userA.id === me ? t.userB : t.userA
-    const unread = await prisma.message.count({
-      where: {
-        groupId: t.groupId,
-        deletedAt: null,
-        authorId: { not: me },
-        reads: { none: { userId: me } }
-      }
-    })
-    return { id: t.id, groupId: t.groupId, other, lastMessage: t.group.messages[0] || null, _unread: unread }
-  }))
+    return { id: t.id, groupId: t.groupId, other, lastMessage: t.group.messages[0] || null, _unread: unreadMap.get(t.groupId) || 0 }
+  })
   res.json(data)
 })
 
@@ -90,9 +96,8 @@ router.post('/:userId', async (req, res) => {
   })
   const otherUser = full.userA.id === me ? full.userB : full.userA
   try {
-    // Notifica todos os clientes que uma nova DM foi criada.
-    // Clientes filtram pelo seu próprio userId.
-    req.io?.emit('dm:created', {
+    // Notifica apenas os dois participantes (sala pessoal user:<id>)
+    req.io?.to([`user:${full.userA.id}`, `user:${full.userB.id}`]).emit('dm:created', {
       groupId: full.groupId,
       userA: { id: full.userA.id, name: full.userA.name, avatarUrl: full.userA.avatarUrl },
       userB: { id: full.userB.id, name: full.userB.name, avatarUrl: full.userB.avatarUrl },

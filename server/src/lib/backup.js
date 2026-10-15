@@ -74,8 +74,12 @@ function calcDirSize(dir) {
 }
 
 export function getBackupPath(name) {
+  // Só aceita nomes simples (sem barras ou "..") para não sair da pasta de backups
+  if (typeof name !== "string" || !/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") {
+    throw new Error("Nome de backup inválido.");
+  }
   const dir = path.join(BACKUP_ROOT, name);
-  if (!dir.startsWith(BACKUP_ROOT)) {
+  if (!dir.startsWith(BACKUP_ROOT + path.sep)) {
     throw new Error("Nome de backup inválido.");
   }
   return dir;

@@ -30,6 +30,12 @@ services:
       - minha_rede
     depends_on:
       - postgres
+    # Sem volumes, uploads/configurações/backups eram apagados a cada novo deploy.
+    # Caminhos relativos ao WORKDIR /app (UPLOAD_DIR=uploads, CONFIG_DIR=data, BACKUP_DIR=backups)
+    volumes:
+      - farmachat_uploads:/app/uploads
+      - farmachat_data:/app/data
+      - farmachat_backups:/app/backups
     labels:
       - traefik.enable=true
       - traefik.docker.network=minha_rede
@@ -76,3 +82,6 @@ services:
 
 volumes:
   postgres_data:
+  farmachat_uploads:
+  farmachat_data:
+  farmachat_backups:

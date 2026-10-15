@@ -1,4 +1,4 @@
-﻿import express from 'express'
+import express from 'express'
 import { adminRequired, authRequired } from '../middleware/auth.js'
 import { prisma } from '../prisma.js'
 import { getOnlineUserCount, getOnlineSessionCount } from '../lib/presence.js'
@@ -98,7 +98,7 @@ router.get('/', async (req, res) => {
     const groupNameMap = new Map(busiestGroupNames.map((group) => [group.id, group.name]))
     const busiestGroups = busiestGroupsRaw.map((item) => ({
       groupId: item.groupId,
-      name: groupNameMap.get(item.groupId) || 'â€”',
+      name: groupNameMap.get(item.groupId) || '—',
       messages: item._count.groupId,
     }))
     const timeline = buildMinuteTimeline(recentMessages, now, 10)

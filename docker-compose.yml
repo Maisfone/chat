@@ -27,6 +27,8 @@ services:
     command: sh -c "npx prisma migrate deploy && npm start"
     volumes:
       - server_uploads:/app/uploads
+      - server_data:/app/data
+      - server_backups:/app/backups
     healthcheck:
       test:
         [
@@ -59,3 +61,5 @@ services:
 volumes:
   postgres_data:
   server_uploads:
+  server_data:
+  server_backups:

@@ -1,12 +1,9 @@
 import express from 'express'
 import { prisma } from '../prisma.js'
-import { adminRequired, authRequired } from '../middleware/auth.js'
+import { adminRequired, authRequired, invalidateUserCache, signToken } from '../middleware/auth.js'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { handleUploadSingle } from '../lib/storage.js'
-import multer from 'multer'
-import fs from 'fs'
-import path from 'path'
 
 const router = express.Router()
 
@@ -46,20 +43,8 @@ router.get('/:id/groups', adminRequired, async (req, res) => {
   res.json(groups)
 })
 
-// Upload config para avatar do próprio usuário
-const uploadDir = process.env.UPLOAD_DIR || 'uploads'
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname)
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`)
-  }
-})
-const upload = multer({ storage })
-
 // Atualizar perfil próprio (nome, telefone, endereço, avatar)
-router.patch('/me', ...(Array.isArray(handleUploadSingle('avatar')) ? handleUploadSingle('avatar') : [handleUploadSingle('avatar')]), async (req, res) => {
+router.patch('/me', handleUploadSingle('avatar', { accept: 'image' }), async (req, res) => {
   const schema = z.object({
     name: z.string().min(2).optional(),
     phone: z.string().optional().nullable(),
@@ -84,8 +69,10 @@ router.post('/me/password', async (req, res) => {
     const ok = await bcrypt.compare(current, user.password)
     if (!ok) return res.status(401).json({ error: 'Senha atual inválida' })
     const hash = await bcrypt.hash(password, 10)
-    await prisma.user.update({ where: { id: req.user.id }, data: { password: hash } })
-    res.json({ ok: true })
+    // Sessões antigas (outros dispositivos) deixam de valer; o cliente atual recebe um token novo
+    const updated = await prisma.user.update({ where: { id: req.user.id }, data: { password: hash, passwordChangedAt: new Date() } })
+    invalidateUserCache(req.user.id)
+    res.json({ ok: true, token: signToken(updated) })
   } catch (e) {
     res.status(400).json({ error: 'Falha ao alterar senha' })
   }
@@ -147,6 +134,11 @@ router.patch('/:id', adminRequired, async (req, res) => {
   try {
     const data = schema.parse(req.body)
     const user = await prisma.user.update({ where: { id: req.params.id }, data })
+    invalidateUserCache(user.id)
+    if (user.isBlocked) {
+      // Derruba conexões em tempo real do usuário bloqueado
+      try { req.io?.in(`user:${user.id}`).disconnectSockets(true) } catch {}
+    }
     try { req.io?.emit('user:updated', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl, isBlocked: user.isBlocked, isAdmin: user.isAdmin }) } catch {}
     res.json({ ok: true })
   } catch (e) {
@@ -160,7 +152,9 @@ router.post('/:id/password', adminRequired, async (req, res) => {
   try {
     const { password } = schema.parse(req.body)
     const hash = await bcrypt.hash(password, 10)
-    await prisma.user.update({ where: { id: req.params.id }, data: { password: hash } })
+    await prisma.user.update({ where: { id: req.params.id }, data: { password: hash, passwordChangedAt: new Date() } })
+    invalidateUserCache(req.params.id)
+    try { req.io?.in(`user:${req.params.id}`).disconnectSockets(true) } catch {}
     res.json({ ok: true })
   } catch (e) {
     res.status(400).json({ error: 'Falha ao alterar senha' })
@@ -241,6 +235,8 @@ router.delete('/:id', adminRequired, async (req, res) => {
       await tx.user.delete({ where: { id } })
     })
 
+    invalidateUserCache(id)
+    try { req.io?.in(`user:${id}`).disconnectSockets(true) } catch {}
     try { req.io?.emit('user:deleted', { id }) } catch {}
     res.status(204).send()
   } catch (e) {

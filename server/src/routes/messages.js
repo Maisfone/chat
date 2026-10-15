@@ -76,6 +76,26 @@ function attachReactionSummary(message, viewerId) {
   }
 }
 
+async function isMember(groupId, userId) {
+  const member = await prisma.groupMember.findFirst({ where: { groupId, userId }, select: { id: true } })
+  return Boolean(member)
+}
+
+// Garante que a mensagem respondida existe e é do mesmo grupo
+async function validReplyToId(replyToId, groupId) {
+  if (!replyToId) return null
+  const target = await prisma.message.findUnique({ where: { id: replyToId }, select: { groupId: true } })
+  return target && target.groupId === groupId ? replyToId : null
+}
+
+// Verifica participação ANTES de gravar o arquivo enviado
+async function requireMember(req, res, next) {
+  if (!(await isMember(req.params.groupId, req.user.id))) {
+    return res.status(403).json({ error: 'Sem acesso ao grupo' })
+  }
+  next()
+}
+
 // Upload de arquivo (local ou S3)
 const upload = handleUploadSingle('file')
 
@@ -101,13 +121,13 @@ router.get('/favorites', async (req, res) => {
   }
 })
 
-export default router
-
 // Listar mensagens de um grupo (paginação simples)
 router.get('/:groupId', async (req, res) => {
   const { groupId } = req.params
-  const take = Math.min(parseInt(req.query.take || '50', 10), 100)
-  const cursor = req.query.cursor
+  if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+  const parsedTake = parseInt(req.query.take || '50', 10)
+  const take = Math.min(Number.isFinite(parsedTake) && parsedTake > 0 ? parsedTake : 50, 100)
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null
   const where = { groupId }
   const messages = await prisma.message.findMany({
     where,
@@ -138,14 +158,14 @@ router.post('/:groupId', async (req, res) => {
   const { groupId } = req.params
   const schema = z.object({
     type: z.enum(['text','gif','sticker','image','audio']).default('text'),
-    content: z.string().min(1),
+    content: z.string().min(1).max(20000),
     replyToId: z.string().uuid().optional().nullable()
   })
   try {
-    const { type, content, replyToId } = schema.parse(req.body)
+    const { type, content, replyToId: rawReplyToId } = schema.parse(req.body)
     // valida se usuário é membro do grupo
-    const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
-    if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+    if (!(await isMember(groupId, req.user.id))) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+    const replyToId = await validReplyToId(rawReplyToId, groupId)
     const mentionIds = type === 'text'
       ? await resolveMentionUserIds({ groupId, authorId: req.user.id, content })
       : []
@@ -216,12 +236,10 @@ router.post('/:groupId', async (req, res) => {
 })
 
 // Upload de áudio/imagem
-router.post('/:groupId/upload', upload, async (req, res) => {
+router.post('/:groupId/upload', requireMember, upload, async (req, res) => {
   const { groupId } = req.params
   const kind = (req.query.type || 'audio')
   if (!['audio', 'image', 'file'].includes(kind)) return res.status(400).json({ error: 'Tipo inválido' })
-  const member = await prisma.groupMember.findFirst({ where: { groupId, userId: req.user.id } })
-  if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
   const url = req.file?.url
   if (!url) return res.status(400).json({ error: 'Falha no upload' })
   // Preserve original file name in the URL as a query param for display purposes
@@ -234,7 +252,7 @@ router.post('/:groupId/upload', upload, async (req, res) => {
       contentUrl = `${url}${sep}name=${encodeURIComponent(original)}`
     }
   } catch {}
-  const replyToId = typeof req.query.replyToId === 'string' ? req.query.replyToId : null
+  const replyToId = await validReplyToId(typeof req.query.replyToId === 'string' ? req.query.replyToId : null, groupId)
   const storedType = kind === 'file' ? 'sticker' : kind
   const msg = await prisma.$transaction(async (tx) => {
     const created = await tx.message.create({
@@ -301,7 +319,7 @@ router.post('/:groupId/read', async (req, res) => {
 router.patch('/:messageId', async (req, res) => {
   const { messageId } = req.params
   try {
-    const schema = z.object({ content: z.string().min(1) })
+    const schema = z.object({ content: z.string().min(1).max(20000) })
     const { content } = schema.parse(req.body)
     const msg = await prisma.message.findUnique({ where: { id: messageId } })
     if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' })
@@ -442,24 +460,5 @@ router.delete('/:messageId/favorite', async (req, res) => {
   res.json({ ok: true })
 })
 
-// Listar favoritos do usuário atual (opcional por groupId)
-router.get('/favorites', async (req, res) => {
-  try {
-    const groupId = req.query.groupId
-    const favs = await prisma.messageFavorite.findMany({
-      where: groupId ? { userId: req.user.id, message: { groupId } } : { userId: req.user.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        message: {
-          select: {
-            id: true, groupId: true, type: true, content: true, createdAt: true,
-            author: { select: { id: true, name: true, avatarUrl: true } }
-          }
-        }
-      }
-    })
-    res.json(favs)
-  } catch (e) {
-    res.status(400).json({ error: 'Falha ao listar favoritos' })
-  }
-})
+
+export default router
