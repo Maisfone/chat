@@ -9,6 +9,19 @@ const UPLOAD_DIR = path.resolve(process.cwd(), process.env.UPLOAD_DIR || "upload
 const PG_DUMP_CMD = process.env.PG_DUMP_PATH || "pg_dump";
 const PSQL_CMD = process.env.PSQL_PATH || "psql";
 
+// pg_dump/psql não aceitam parâmetros específicos do Prisma (ex.: ?schema=public)
+function pgToolsUrl(url) {
+  try {
+    const parsed = new URL(url);
+    for (const key of ["schema", "connection_limit", "pool_timeout", "pgbouncer", "statement_cache_size", "socket_timeout"]) {
+      parsed.searchParams.delete(key);
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function ensureBackupRoot() {
   try {
     if (!fs.existsSync(BACKUP_ROOT)) fs.mkdirSync(BACKUP_ROOT, { recursive: true });
@@ -105,7 +118,7 @@ export async function createBackup({ reason = "manual", actorId = null } = {}) {
 
   const dumpFile = path.join(dir, "db.sql");
   const dumpArgs = [
-    `--dbname=${DATABASE_URL}`,
+    `--dbname=${pgToolsUrl(DATABASE_URL)}`,
     "--no-owner",
     "--no-privileges",
     "--clean",
@@ -204,7 +217,7 @@ export async function restoreBackup(name) {
     throw new Error("Arquivo db.sql não encontrado no backup.");
   }
   const restoreArgs = [
-    `--dbname=${DATABASE_URL}`,
+    `--dbname=${pgToolsUrl(DATABASE_URL)}`,
     "--single-transaction",
     "--set=ON_ERROR_STOP=on",
     "--file",

@@ -22,6 +22,19 @@ function fail(msg, code = 1) {
   process.exit(code);
 }
 
+// pg_dump/psql não aceitam parâmetros específicos do Prisma (ex.: ?schema=public)
+function pgToolsUrl(url) {
+  try {
+    const parsed = new URL(url);
+    for (const key of ["schema", "connection_limit", "pool_timeout", "pgbouncer", "statement_cache_size", "socket_timeout"]) {
+      parsed.searchParams.delete(key);
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   fail("DATABASE_URL não definido. Exporte a variável antes de restaurar.");
@@ -74,7 +87,7 @@ if (!confirmFlag) {
 function runRestore() {
   console.log("🗄️  Restaurando banco de dados com psql...");
   const restoreArgs = [
-    `--dbname=${databaseUrl}`,
+    `--dbname=${pgToolsUrl(databaseUrl)}`,
     "--single-transaction",
     "--set=ON_ERROR_STOP=on",
     "--file",
