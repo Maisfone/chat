@@ -12,10 +12,14 @@ const router = express.Router()
 
 const RESET_TTL_MS = 30 * 60 * 1000
 
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Muitas tentativas de login. Aguarde alguns minutos.' })
-const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10 })
-const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5 })
-const resetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 })
+const emailKey = (req) => String(req.body?.email || '').trim().toLowerCase()
+const LOGIN_MSG = 'Muitas tentativas de login. Aguarde alguns minutos.'
+// Só tentativas erradas contam: 10 por conta (IP + e-mail) e 50 por IP, a cada 15 min
+const loginLimiterPerAccount = rateLimit({ max: 10, onlyFailures: true, message: LOGIN_MSG, keyFn: (req) => `login|${req.ip}|${emailKey(req)}` })
+const loginLimiterPerIp = rateLimit({ max: 50, onlyFailures: true, message: LOGIN_MSG, keyFn: (req) => `login|${req.ip}` })
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20 })
+const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 3, keyFn: (req) => `forgot|${emailKey(req)}` })
+const resetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, onlyFailures: true })
 
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -96,7 +100,7 @@ const loginSchema = z.object({
   password: z.string().min(1).max(200),
 })
 
-router.post('/login', loginLimiter, async (req, res) => {
+router.post('/login', loginLimiterPerIp, loginLimiterPerAccount, async (req, res) => {
   try {
     const { email, password } = loginSchema.parse(req.body)
     const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } })

@@ -128,7 +128,7 @@ export default function Login() {
       const res = await api.post("/auth/forgot-password", { email: trimmed });
       setForgotStatus(
         res?.message ||
-          "Se o e-mail estiver cadastrado, você receberá uma nova senha."
+          "Se o e-mail estiver cadastrado, você receberá um link para redefinir a senha."
       );
     } catch (err) {
       setForgotError(
@@ -291,14 +291,14 @@ export default function Login() {
 
             {success && (
               <div className="flex items-center gap-2 rounded-xl border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200">
-                <span className="text-base">?</span>
+                <span className="text-base">✓</span>
                 <span>{success}</span>
               </div>
             )}
 
             {error && (
               <div className="flex items-center gap-2 rounded-xl border border-red-300/60 bg-red-50/80 px-3 py-2 text-sm text-red-600 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
-                <span className="text-base">??</span>
+                <span className="text-base">⚠</span>
                 <span>{error}</span>
               </div>
             )}
@@ -342,7 +342,7 @@ export default function Login() {
             </button>
             <h2 className="text-xl font-semibold mb-2">Recuperar senha</h2>
             <p className="text-sm text-slate-300 mb-4">
-              Informe o e-mail cadastrado para receber uma nova senha temporária.
+              Informe o e-mail cadastrado para receber um link de redefinição de senha.
             </p>
             <form onSubmit={handleForgot} className="space-y-3">
               <input
@@ -357,7 +357,7 @@ export default function Login() {
                 disabled={forgotLoading}
                 className="w-full rounded-2xl bg-teal-500/90 px-4 py-2.5 font-semibold text-white shadow-lg shadow-teal-500/30 transition hover:bg-teal-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {forgotLoading ? "Enviando..." : "Enviar nova senha"}
+                {forgotLoading ? "Enviando..." : "Enviar link"}
               </button>
               {forgotStatus && (
                 <div className="rounded-xl border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-emerald-100 text-sm">

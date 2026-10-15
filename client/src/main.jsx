@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import App from "./App.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import Chat from "./pages/Chat.jsx";
 import Conversations from "./pages/Conversations.jsx";
 import Phone from "./pages/Phone.jsx";
@@ -34,6 +35,7 @@ createRoot(document.getElementById("root")).render(
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/redefinir-senha" element={<ResetPassword />} />
         <Route path="/join/:token" element={<MeetingInvite />} />
         <Route
           path="/"

@@ -141,6 +141,11 @@ io.on("connection", (socket) => {
   const userId = socket.data.userId;
   // Sala pessoal para eventos direcionados (ex.: dm:created)
   socket.join(`user:${userId}`);
+  // Entra nas salas de todos os grupos/DMs do usuário (também após reconexões)
+  prisma.groupMember
+    .findMany({ where: { userId }, select: { groupId: true } })
+    .then((rows) => rows.forEach((r) => socket.join(r.groupId)))
+    .catch(() => {});
 
   socket.on("group:join", async (groupId) => {
     try {

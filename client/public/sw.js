@@ -1,14 +1,4 @@
 /* eslint-disable no-restricted-globals */
-const VAPID_PUBLIC_KEY = 'BLX4iWgrhNgMUBR7yYLSu_LLHgE0ZbrFlrY9UBd3hGAfXc6SrOTcsVf2tdI1hJEzcXG3cg8NFIkNmvDXIK8sKm0';
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; i += 1) outputArray[i] = rawData.charCodeAt(i);
-  return outputArray;
-}
 
 self.addEventListener('push', (event) => {
   if (!event.data) return;
@@ -63,9 +53,12 @@ self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil(
     (async () => {
       try {
+        // Reutiliza a chave da assinatura anterior; o app confere a chave atual ao abrir
+        const applicationServerKey = event.oldSubscription?.options?.applicationServerKey;
+        if (!applicationServerKey) return;
         const subscription = await self.registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          applicationServerKey,
         });
         const allClients = await clients.matchAll({ includeUncontrolled: true, type: 'window' });
         for (const client of allClients) {

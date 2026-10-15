@@ -99,6 +99,8 @@ router.post('/:groupId/members', adminRequired, async (req, res) => {
     const { userId, role } = schema.parse(req.body)
     const groupId = req.params.groupId
     const member = await prisma.groupMember.create({ data: { groupId, userId, role: role || 'member' } })
+    // Conexões abertas do usuário passam a receber o grupo em tempo real
+    try { req.io?.in(`user:${userId}`).socketsJoin(groupId) } catch {}
     res.status(201).json(member)
   } catch (e) {
     res.status(400).json({ error: 'Dados inválidos ou membro já existe' })
@@ -109,6 +111,8 @@ router.delete('/:groupId/members/:userId', adminRequired, async (req, res) => {
   const { groupId, userId } = req.params
   try {
     await prisma.groupMember.delete({ where: { groupId_userId: { groupId, userId } } })
+    // Removido do grupo deixa de receber as mensagens em tempo real
+    try { req.io?.in(`user:${userId}`).socketsLeave(groupId) } catch {}
     res.status(204).send()
   } catch {
     res.status(404).json({ error: 'Membro não encontrado' })

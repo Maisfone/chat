@@ -1,4 +1,4 @@
-﻿import { getToken, clearAuth } from "../state/auth.js";
+import { getToken, getUser, setAuth, clearAuth } from "../state/auth.js";
 
 function inferDefaultApiBase() {
   // Try to infer a sensible default for dev/prod without .env
@@ -30,7 +30,7 @@ async function handle(res) {
     } catch {
       msg = t;
     }
-    throw new Error(msg || "Erro de requisiÃ§Ã£o");
+    throw new Error(msg || "Erro de requisição");
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
@@ -59,7 +59,15 @@ export const api = {
         Authorization: `Bearer ${getToken()}`,
       },
       body: JSON.stringify(body),
-    }).then(handleAuth),
+    })
+      .then(handleAuth)
+      .then((data) => {
+        // Trocar a própria senha invalida o token antigo; o servidor devolve um novo
+        if (path === "/users/me/password" && data?.token) {
+          setAuth(data.token, getUser());
+        }
+        return data;
+      }),
   put: (path, body) =>
     fetch(`${API_BASE}${path}`, {
       method: "PUT",

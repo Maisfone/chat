@@ -1343,7 +1343,7 @@ export default function Chat() {
     } catch {}
   }
 
-  // Desbloqueia o AudioContext apÃ³s a primeira interaÃ§Ã£o do usuÃ¡rio
+  // Desbloqueia o AudioContext após a primeira interação do usuário
   useEffect(() => {
     function resumeAudio() {
       try {
@@ -1650,10 +1650,10 @@ export default function Chat() {
     const dm = dms.find((d) => d.groupId === gid);
     return dm?.other?.id || null;
   }, [dms, active?.id]);
-  // Fallback para identificar o outro participante em DMs quando dms ainda nÃ£o hidratou
+  // Fallback para identificar o outro participante em DMs quando dms ainda não hidratou
   const otherUserId = useMemo(() => {
     if (dmOtherId) return dmOtherId;
-    // tenta inferir pelo autor de alguma mensagem que nÃ£o seja minha
+    // tenta inferir pelo autor de alguma mensagem que não seja minha
     const m = (messages || []).find(
       (x) =>
         (x.author?.id || x.authorId) &&
@@ -1823,7 +1823,7 @@ export default function Chat() {
     } catch {}
   }, [dms]);
 
-  // Realtime: DM criada (join automÃ¡tico + atualizar lista de DMs)
+  // Realtime: DM criada (join automático + atualizar lista de DMs)
   useEffect(() => {
     const s = ioClient();
     const meId = user?.id;
@@ -1832,9 +1832,9 @@ export default function Chat() {
       try {
         const { groupId, userA, userB } = payload || {};
         if (!groupId || !userA?.id || !userB?.id) return;
-        if (userA.id !== meId && userB.id !== meId) return; // nÃ£o envolve este usuÃ¡rio
+        if (userA.id !== meId && userB.id !== meId) return; // não envolve este usuário
         const other = userA.id === meId ? userB : userA;
-        // adiciona DM se ainda nÃ£o existir
+        // adiciona DM se ainda não existir
         const nowTs = Date.now();
         const arrivedAt = arrivalTimestamp(payload, nowTs);
         setDms((prev) => {
@@ -4166,7 +4166,7 @@ export default function Chat() {
                             const title = isRead ? "Visualizada" : "Entregue";
                             return <StatusTicks read={isRead} title={title} />;
                           }
-                          // Grupo: azul quando hÃ¡ pelo menos um leitor (aproximaÃ§Ã£o visual)
+                          // Grupo: azul quando há pelo menos um leitor (aproximação visual)
                           const readerIds = readers.filter(
                             (uid) => uid && uid !== user?.id
                           );
@@ -4212,7 +4212,7 @@ export default function Chat() {
                         setReactionPickerFor(null);
                         setMenuFor(menuFor === m.id ? null : m.id);
                       }}
-                      aria-label="AÃ§Ãµes"
+                      aria-label="Ações"
                     >
                       ...
                     </button>
@@ -5685,7 +5685,7 @@ function StatusTicks({ read, title }) {
             />
           </>
         )}
-        {/* TraÃ§o principal */}
+        {/* Traço principal */}
         <path
           d="M1.5 13.5l4 4 7-7"
           stroke={color}
