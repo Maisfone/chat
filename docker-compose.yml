@@ -8,9 +8,10 @@ services:
       POSTGRES_DB: db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Só acessível pela própria máquina (não expõe o banco na rede)
-    ports:
-      - "127.0.0.1:5432:5432"
+    # Banco não é exposto: o servidor acessa pela rede interna do Docker.
+    # Para acessar de fora (ex.: DBeaver), descomente usando uma porta livre:
+    # ports:
+    #   - "127.0.0.1:5433:5432"
 
   server:
     build: ./server
