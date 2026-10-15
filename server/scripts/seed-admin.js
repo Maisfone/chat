@@ -15,7 +15,8 @@ async function main() {
   const hash = await bcrypt.hash(password, 10)
   const user = await prisma.user.upsert({
     where: { email },
-    update: { name, password: hash, isAdmin: true },
+    // passwordChangedAt invalida sessões abertas com a senha anterior
+    update: { name, password: hash, isAdmin: true, isBlocked: false, passwordChangedAt: new Date() },
     create: { name, email, password: hash, isAdmin: true }
   })
   console.log('Admin pronto:', { id: user.id, email: user.email })
