@@ -4,12 +4,13 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "270424"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
       POSTGRES_DB: db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Só acessível pela própria máquina (não expõe o banco na rede)
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   server:
     build: ./server
@@ -18,8 +19,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: "postgresql://postgres:270424@db:5432/db?schema=public"
-      JWT_SECRET: "dev-local-secret-change-me"
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/db?schema=public"
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env}
+      APP_URL: "http://localhost"
       CORS_ORIGIN: "http://localhost,http://localhost:80,http://localhost:5173"
       UPLOAD_DIR: "/app/uploads"
     command: sh -c "npx prisma migrate deploy && npm start"
