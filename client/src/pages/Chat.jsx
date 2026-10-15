@@ -2906,6 +2906,16 @@ export default function Chat() {
   // Filtered/sorted lists (WhatsApp-like): last activity desc, unread desc, then name
   const [onlyPinned, setOnlyPinned] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
+  const [listFilterOpen, setListFilterOpen] = useState(false);
+  const listFilterRef = useRef(null);
+  useEffect(() => {
+    if (!listFilterOpen) return;
+    const close = (event) => {
+      if (listFilterRef.current && !listFilterRef.current.contains(event.target)) setListFilterOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [listFilterOpen]);
   const dmGroupIds = useMemo(() => {
     const set = new Set();
     (dms || []).forEach((dm) => {
@@ -3024,6 +3034,33 @@ export default function Chat() {
     return active?.name || "Direto";
   }, [active, activeIsDM, dms]);
 
+  // "3 membros" para grupos; status de presença para conversas diretas
+  const activeSubtitle = useMemo(() => {
+    if (!active?.id) return "";
+    if (activeIsDM) {
+      const dmInfo = (dms || []).find((d) => d.groupId === active.id);
+      const otherId = dmInfo?.other?.id;
+      const st = String((otherId && presence[otherId]) || "offline").toLowerCase();
+      if (st === "online") return "Online";
+      if (st === "ausente" || st === "away") return "Ausente";
+      return "Offline";
+    }
+    const g = (groups || []).find((x) => x.id === active.id);
+    const count = g?._memberCount || mentionMembers.length || 0;
+    return count ? `${count} ${count === 1 ? "membro" : "membros"}` : "";
+  }, [active?.id, activeIsDM, dms, groups, presence, mentionMembers]);
+
+  const showEmptyState =
+    !active || (!messages.length && !historyLoading && !historyHasMore);
+
+  // Campo de mensagem cresce com o texto (até ~6 linhas)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [text]);
+
   const activeAvatar = useMemo(() => {
     if (!active) return undefined;
     if (active.avatarUrl) return active.avatarUrl;
@@ -3068,6 +3105,23 @@ export default function Chat() {
     conversationOrderTs,
     getEffectiveUnread,
   ]);
+
+  // Conversas com mensagens não lidas (aba "Não lidas" e badge do menu lateral)
+  const unreadConversationCount = useMemo(() => {
+    let total = 0;
+    (groups || []).forEach((g) => {
+      if (g?.id && !dmGroupIds.has(g.id) && getEffectiveUnread(g._unread || 0, g.id) > 0) total += 1;
+    });
+    (dms || []).forEach((d) => {
+      if (d?.groupId && getEffectiveUnread(d._unread || 0, d.groupId) > 0) total += 1;
+    });
+    return total;
+  }, [groups, dms, dmGroupIds, getEffectiveUnread]);
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent("chat:unreadTotal", { detail: unreadConversationCount }));
+    } catch {}
+  }, [unreadConversationCount]);
 
   // Hydrate Groups with last activity/preview on initial load/refresh (similar to DMs)
   useEffect(() => {
@@ -3281,214 +3335,231 @@ export default function Chat() {
         <aside
           id="chat-left-pane"
           ref={leftPaneRef}
-        className={`w-72 xl:w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r ${leftPaneTheme} overflow-y-auto transition-transform duration-200 ease-out ${
+        className={`w-80 max-w-full flex-shrink-0 flex h-full flex-col border-r border-ui-border bg-ui-list text-ui-text overflow-y-auto transition-transform duration-200 ease-out ${
           isDesktop ? "" : "fixed inset-y-0 left-0 z-40 shadow-xl"
         } ${
           showLeftPane ? "translate-x-0" : "-translate-x-full"
         } lg:static lg:shadow-none lg:translate-x-0`}
       >
-        <div
-          className={`px-3 py-2 border-b ${
-            isChatDark ? "border-slate-800 bg-slate-950/50 text-slate-200" : "border-slate-200 bg-white text-slate-900"
-          }`}
-        >
-          <input
-            value={convQuery}
-            onChange={(e) => setConvQuery(e.target.value)}
-            placeholder="Buscar conversas..."
-            className={`w-full border rounded px-3 py-1.5 text-sm ${
-              isChatDark
-                ? "border-slate-700 bg-slate-900 text-slate-100 placeholder-slate-500"
-                : "border-slate-300 bg-white text-slate-900 placeholder-slate-500"
-            }`}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              className="px-2 py-1 text-xs rounded border hover:bg-slate-50"
-              onClick={() => {
-                try {
-                  document
-                    .getElementById("people-list")
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                } catch {}
-              }}
-            >
-              Nova conversa
-            </button>
-            <label className="text-xs inline-flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={onlyPinned}
-                onChange={(e) => setOnlyPinned(e.target.checked)}
-              />{" "}
-              Fixadas
-            </label>
-            <label className="text-xs inline-flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={onlyUnread}
-                onChange={(e) => setOnlyUnread(e.target.checked)}
-              />{" "}
-              Não lidas
-            </label>
+        <div className="px-4 pt-4 pb-2">
+          <div className="relative">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ui-muted" />
+            <input
+              value={convQuery}
+              onChange={(e) => setConvQuery(e.target.value)}
+              placeholder="Buscar conversas..."
+              className="h-9 w-full rounded-xl border border-ui-border bg-ui-input pl-9 pr-10 text-sm text-ui-text placeholder:text-ui-muted focus:border-ui-primary/60 focus:outline-none focus:ring-2 focus:ring-ui-primary/20"
+            />
+            <div ref={listFilterRef} className="absolute right-1 top-1/2 -translate-y-1/2">
+              <button
+                type="button"
+                onClick={() => setListFilterOpen((v) => !v)}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-ui-muted hover:bg-ui-hover hover:text-ui-text ${
+                  listFilterOpen ? "bg-ui-hover text-ui-text" : "bg-ui-btn"
+                }`}
+                title="Filtros e opções"
+                aria-label="Filtros e opções"
+                aria-expanded={listFilterOpen}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4">
+                  <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+                  <circle cx="16" cy="7" r="2" />
+                  <circle cx="10" cy="17" r="2" />
+                </svg>
+              </button>
+              {listFilterOpen && (
+                <div className="absolute right-0 top-full z-30 mt-1.5 w-52 rounded-xl border border-ui-border bg-ui-list p-1 text-sm text-ui-text shadow-xl shadow-slate-900/10 dark:shadow-black/40">
+                  <button
+                    type="button"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-ui-hover"
+                    onClick={() => {
+                      setListFilterOpen(false);
+                      setPeopleCollapsed(false);
+                      setTimeout(() => {
+                        try {
+                          document.getElementById("people-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        } catch {}
+                      }, 0);
+                    }}
+                  >
+                    Nova conversa
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-ui-hover"
+                    onClick={() => setGroupsCollapsed((v) => !v)}
+                  >
+                    {groupsCollapsed ? "Mostrar grupos" : "Ocultar grupos"}
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-ui-hover"
+                    onClick={() => setPeopleCollapsed((v) => !v)}
+                  >
+                    {peopleCollapsed ? "Mostrar pessoas" : "Ocultar pessoas"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="mt-2.5 flex items-center gap-1 text-xs font-medium">
+            {[
+              { key: "all", label: "Todas" },
+              { key: "unread", label: "Não lidas", count: unreadConversationCount },
+              { key: "fav", label: "Favoritos" },
+            ].map((tab) => {
+              const selected =
+                tab.key === "all"
+                  ? !onlyUnread && !onlyPinned
+                  : tab.key === "unread"
+                  ? onlyUnread
+                  : onlyPinned;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => {
+                    setOnlyUnread(tab.key === "unread");
+                    setOnlyPinned(tab.key === "fav");
+                  }}
+                  className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+                    selected
+                      ? "bg-ui-primary text-white shadow-sm shadow-blue-600/30"
+                      : "text-ui-text/80 hover:bg-ui-hover"
+                  }`}
+                >
+                  {tab.key === "unread" && (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
+                      <rect x="4" y="4" width="16" height="16" rx="3" />
+                    </svg>
+                  )}
+                  {tab.key === "fav" && <IconStar className="h-3.5 w-3.5" />}
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span
+                      className={`inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-semibold ${
+                        selected ? "bg-white text-ui-primary" : "bg-ui-primary text-white"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
-        <div
-          className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide sticky top-0 z-10 flex items-center justify-between ${
-            isChatDark
-              ? "text-slate-400 bg-slate-950/70 border-slate-800"
-              : "text-slate-500 bg-white border-slate-200"
-          }`}
-        >
+        <div className="sticky top-0 z-10 flex items-center justify-between bg-ui-list px-4 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ui-muted">
           <span>Grupos</span>
           <button
             type="button"
-            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-transform"
+            className="rounded p-0.5 text-ui-muted hover:text-ui-text"
             onClick={() => setGroupsCollapsed((v) => !v)}
             aria-label={groupsCollapsed ? "Expandir grupos" : "Ocultar grupos"}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className={`w-4 h-4 transition-transform ${
-                groupsCollapsed ? "-rotate-90" : "rotate-0"
-              }`}
-            >
-              <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
-            </svg>
+            <IconChevronRight className={`h-3.5 w-3.5 transition-transform ${groupsCollapsed ? "rotate-90" : ""}`} />
           </button>
         </div>
-        {!groupsCollapsed &&
-          filteredGroups.map((g) => {
-            const lastAt = g?._lastAt || 0;
-            const lastLabel = lastAt
-              ? new Date(lastAt).toLocaleTimeString("pt-BR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "";
-            const preview = g?._lastPreview || "";
-            const isPinned = !!pinned?.[g.id];
-            const isMuted = !!muted?.[g.id];
-            const unreadCount = getEffectiveUnread(g._unread || 0, g.id);
-            const mentionCount = g?._mentions || 0;
-            return (
-              <button
-                key={g.id}
-                onClick={() => {
-                  setActive(g);
-                  hideLeftIfMobile();
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSideMenu({
-                    open: true,
-                    type: "group",
-                    id: g.id,
-                    groupId: g.id,
-                    x: e.clientX,
-                    y: e.clientY,
-                  });
-                }}
-                className={`px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/60 border ${
-                  active?.id === g.id
-                    ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
-                    : "border-transparent hover:border-slate-200 dark:border-transparent dark:hover:border-slate-600"
-                } flex items-center justify-between transition-colors`}
-                title={g.name || ""}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-left" title={g.name || ""}>
-                      {g.name}
-                    </span>
-                    {lastLabel && (
-                      <span className="text-[11px] text-slate-500">
-                        {lastLabel}
+        {!groupsCollapsed && (
+          <div className="flex flex-col gap-0.5 px-2">
+            {filteredGroups.map((g) => {
+              const lastAt = g?._lastAt || 0;
+              const isPinned = !!pinned?.[g.id];
+              const isMuted = !!muted?.[g.id];
+              const unreadCount = getEffectiveUnread(g._unread || 0, g.id);
+              const mentionCount = g?._mentions || 0;
+              const memberCount = g?._memberCount || 0;
+              const subtitleParts = [];
+              if (memberCount) subtitleParts.push(`${memberCount} ${memberCount === 1 ? "membro" : "membros"}`);
+              // Grupo sem mensagens não mostra "Última mensagem" (lastAt seria a data de criação)
+              if (lastAt && (g?.lastMessage || g?._lastPreview)) subtitleParts.push(`Última mensagem ${formatDayAndTime(lastAt)}`);
+              const subtitle = subtitleParts.join(" • ") || g?._lastPreview || "";
+              const selected = active?.id === g.id;
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => {
+                    setActive(g);
+                    hideLeftIfMobile();
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSideMenu({
+                      open: true,
+                      type: "group",
+                      id: g.id,
+                      groupId: g.id,
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors ${
+                    selected ? "bg-ui-selected" : "hover:bg-ui-hover"
+                  }`}
+                  title={g.name || ""}
+                >
+                  <Avatar url={g.avatarUrl} name={g.name} size={40} variant="group" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold text-ui-text">{g.name}</span>
+                      <span className="flex shrink-0 items-center gap-1 text-[11px] text-ui-muted">
+                        {isMuted && <IconBellSlash className="h-3 w-3" />}
+                        {isPinned && <IconStar className="h-3 w-3 text-amber-500" />}
+                        {lastAt && (g?.lastMessage || g?._lastPreview) ? formatListTime(lastAt) : ""}
                       </span>
-                    )}
-                  </div>
-                  {preview && (
-                    <div
-                      className="text-slate-500 truncate max-w-[220px] text-xs"
-                      title={preview}
-                    >
-                      {preview}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {mentionCount > 0 && (
-                    <span
-                      className="ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-[11px] inline-flex items-center justify-center shadow"
-                      title="Você foi mencionado"
-                      aria-label="Você foi mencionado"
-                    >
-                      @
                     </span>
-                  )}
-                  {unreadCount > 0 && (
-                    <span className="ml-2 min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
-                      {unreadCount}
+                    <span className="mt-0.5 flex items-center justify-between gap-2">
+                      <span className="truncate text-[11px] text-ui-muted" title={subtitle}>
+                        {subtitle}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {mentionCount > 0 && (
+                          <span
+                            className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-semibold text-white"
+                            title="Você foi mencionado"
+                            aria-label="Você foi mencionado"
+                          >
+                            @
+                          </span>
+                        )}
+                        {unreadCount > 0 && (
+                          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-ui-primary px-1.5 text-[11px] font-semibold text-white">
+                            {unreadCount}
+                          </span>
+                        )}
+                      </span>
                     </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        <div
-          className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide border-t sticky top-0 z-10 flex items-center justify-between ${
-            isChatDark
-              ? "text-slate-400 bg-slate-950/70 border-slate-800"
-              : "text-slate-500 bg-white border-slate-200"
-          }`}
-        >
+                  </span>
+                </button>
+              );
+            })}
+            {!filteredGroups.length && (
+              <div className="px-3 py-2 text-xs text-ui-muted">Nenhum grupo encontrado.</div>
+            )}
+          </div>
+        )}
+        <div className="sticky top-0 z-10 mt-2 flex items-center justify-between bg-ui-list px-4 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ui-muted">
           <span>Pessoas</span>
           <button
             type="button"
-            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-transform"
+            className="rounded p-0.5 text-ui-muted hover:text-ui-text"
             onClick={() => setPeopleCollapsed((v) => !v)}
-            aria-label={
-              peopleCollapsed ? "Expandir pessoas" : "Ocultar pessoas"
-            }
+            aria-label={peopleCollapsed ? "Expandir pessoas" : "Ocultar pessoas"}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className={`w-4 h-4 transition-transform ${
-                peopleCollapsed ? "-rotate-90" : "rotate-0"
-              }`}
-            >
-              <path d="M8.47 4.97a.75.75 0 0 1 1.06 0l6 6a.75.75 0 0 1 0 1.06l-6 6a.75.75 0 1 1-1.06-1.06L13.94 12 8.47 6.53a.75.75 0 0 1 0-1.06Z" />
-            </svg>
+            <IconChevronRight className={`h-3.5 w-3.5 transition-transform ${peopleCollapsed ? "rotate-90" : ""}`} />
           </button>
         </div>
         {!peopleCollapsed && (
-          <div id="people-list" className="px-3 py-2 flex flex-col gap-1">
+          <div id="people-list" className="flex flex-col gap-0.5 px-2 pb-3">
             {filteredPeople.map((p) => {
               const dmInfo = dmByOtherId[p.id] || null;
-              const unread = getEffectiveUnread(
-                dmInfo?._unread || 0,
-                dmInfo?.groupId
-              );
+              const unread = getEffectiveUnread(dmInfo?._unread || 0, dmInfo?.groupId);
               const lastAt = dmInfo?._lastAt || 0;
-              const lastLabel = lastAt
-                ? new Date(lastAt).toLocaleTimeString("pt-BR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : "";
               const preview = dmInfo?._lastPreview || "";
               const isPinned = !!pinned?.[p.id];
-              const isSelected = !!(
-                active?.id &&
-                dmInfo?.groupId &&
-                active.id === dmInfo.groupId
-              );
+              const personStatus = presence[p.id] || p.status;
+              const isSelected = !!(active?.id && dmInfo?.groupId && active.id === dmInfo.groupId);
               return (
                 <button
                   key={p.id}
@@ -3505,66 +3576,44 @@ export default function Chat() {
                       y: e.clientY,
                     });
                   }}
-                  className={`rounded-lg px-2 py-2 flex items-center justify-between gap-2 border transition-colors ${
-                    isSelected
-                      ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600"
-                      : "hover:bg-slate-50 dark:hover:bg-slate-700/60 border-transparent hover:border-slate-200 dark:hover:border-slate-600"
+                  className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors ${
+                    isSelected ? "bg-ui-selected" : "hover:bg-ui-hover"
                   }`}
                 >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <Avatar
-                      url={p.avatarUrl}
-                      name={p.name}
-                      size={40}
-                      status={presence[p.id] || p.status}
-                      showStatus={true}
-                    />
-                    <span className="flex flex-col items-start min-w-0">
-                      <span
-                        className="truncate font-medium text-sm"
-                        title={p.name || ""}
-                      >
+                  <Avatar
+                    url={p.avatarUrl}
+                    name={p.name}
+                    size={40}
+                    status={personStatus}
+                    showStatus={String(personStatus || "").toLowerCase() === "online"}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold text-ui-text" title={p.name || ""}>
                         {p.name}
                       </span>
-                      {p.status && (
-                        <span
-                          className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full border ${
-                            String(p.status).toLowerCase() === "online"
-                              ? "bg-green-50 text-green-700 border-green-200"
-                              : "bg-slate-50 text-slate-600 border-slate-200"
-                          }`}
-                        >
-                          {p.status}
-                        </span>
-                      )}
-                      {preview && (
-                        <span
-                          className="truncate text-xs text-slate-500 max-w-[180px]"
-                          title={preview}
-                        >
-                          {preview}
+                      <span className="flex shrink-0 items-center gap-1 text-[11px] text-ui-muted">
+                        {isPinned && <IconStar className="h-3 w-3 text-amber-500" />}
+                        {lastAt ? formatListTime(lastAt) : ""}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 flex items-center justify-between gap-2">
+                      <span className="truncate text-[12px] text-ui-muted" title={preview}>
+                        {preview || p.email || ""}
+                      </span>
+                      {unread > 0 && (
+                        <span className="inline-flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-ui-primary px-1.5 text-[11px] font-semibold text-white">
+                          {unread}
                         </span>
                       )}
                     </span>
                   </span>
-                  <span className="flex items-center gap-2 shrink-0">
-                    {lastLabel && (
-                      <span className="text-[11px] text-slate-500">
-                        {lastLabel}
-                      </span>
-                    )}
-                    {unread > 0 && (
-                      <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-blue-600/90 text-white text-[11px] inline-flex items-center justify-center shadow">
-                        {unread}
-                      </span>
-                    )}
-                    {Boolean(pinned?.[p.id]) && (
-                      <IconStar className="w-4 h-4 text-amber-500" />
-                    )}
-                  </span>
                 </button>
               );
             })}
+            {!filteredPeople.length && (
+              <div className="px-3 py-2 text-xs text-ui-muted">Ninguém encontrado.</div>
+            )}
           </div>
         )}
       </aside>
@@ -3699,7 +3748,7 @@ export default function Chat() {
       )}
       {/* Conversation area */}
       <div
-      className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg border-r border-slate-900/40 bg-slate-100 dark:bg-slate-950/80"
+      className="relative flex-1 flex min-h-0 min-w-0 flex-col chat-bg"
         onDragOver={handleDragOver}
         onDragEnter={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -3710,11 +3759,11 @@ export default function Chat() {
             Solte os arquivos aqui para anexar
           </div>
         )}
-        <div className="px-4 py-3 sticky top-0 z-10 border-b border-slate-200/70 bg-white/70 bg-gradient-to-r from-white/80 to-slate-50/80 dark:bg-slate-950/80 dark:border-slate-800 dark:from-slate-900/60 dark:to-slate-800/60 backdrop-blur font-medium flex items-center gap-2 shadow-sm">
+        <div className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-3 border-b border-ui-border bg-ui-header px-5">
           {!isDesktop && (
             <button
               type="button"
-              className="lg:hidden inline-flex items-center justify-center rounded border border-slate-300 p-2 text-slate-600 hover:bg-slate-100"
+              className="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-ui-border bg-ui-btn text-ui-muted hover:bg-ui-hover"
               aria-label="Abrir lista de conversas"
               onClick={() => setShowLeftPane(true)}
             >
@@ -3734,21 +3783,31 @@ export default function Chat() {
           )}
           <button
             type="button"
-            className="flex items-center gap-3 min-w-0 truncate text-left hover:underline"
+            className="flex min-w-0 items-center gap-3 text-left"
             onClick={() => openRightProfile()}
-            title="Abrir perfil"
+            title="Abrir detalhes"
           >
             <Avatar
               url={activeAvatar}
-              name={active?.name || "Selecione um grupo"}
-              size={36}
+              name={activeIsDM ? activeDisplayName : active?.name || "Selecione um grupo"}
+              size={40}
+              variant={activeIsDM ? "person" : "group"}
             />
-            <span className="truncate font-semibold text-slate-700 dark:text-slate-200">
-              {activeDisplayName}
+            <span className="min-w-0 leading-tight">
+              <span className="block truncate text-[15px] font-semibold text-ui-text">
+                {activeDisplayName}
+              </span>
+              {activeSubtitle && (
+                <span className="block truncate text-xs text-ui-muted">{activeSubtitle}</span>
+              )}
             </span>
           </button>
-          <div className="ml-auto flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded border border-slate-300 bg-white/90 px-2 py-1 shadow-sm dark:border-slate-600 dark:bg-slate-900/80">
+          <div className="ml-auto flex items-center gap-2">
+            <div
+              className={`flex h-9 items-center gap-2 rounded-lg border border-ui-border bg-ui-btn text-ui-muted ${
+                searchBarOpen ? "px-2.5" : "w-9 justify-center hover:bg-ui-hover hover:text-ui-text"
+              }`}
+            >
                 {!searchBarOpen && (
                   <button
                     type="button"
@@ -3760,7 +3819,8 @@ export default function Chat() {
                         } catch {}
                       }, 10);
                     }}
-                    className="text-slate-500 dark:text-slate-300 hover:text-slate-600 dark:hover:text-slate-100"
+                    className="inline-flex h-9 w-9 items-center justify-center"
+                    title="Buscar mensagens"
                     aria-label="Abrir busca de mensagens"
                   >
                     <IconSearch className="h-4 w-4" />
@@ -3774,7 +3834,7 @@ export default function Chat() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Buscar mensagens..."
-                      className="w-64 border-0 bg-transparent text-sm text-slate-900 focus:outline-none focus:ring-0 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-300"
+                      className="w-56 border-0 bg-transparent text-sm text-ui-text placeholder:text-ui-muted focus:outline-none focus:ring-0"
                       aria-label="Buscar mensagens"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
@@ -3836,7 +3896,7 @@ export default function Chat() {
             <div className="relative">
               <button
                 type="button"
-                className="px-2 py-1 rounded border border-slate-300 text-slate-600 dark:text-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/60"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-ui-border bg-ui-btn text-ui-muted hover:bg-ui-hover hover:text-ui-text"
                 title="Mais opções"
                 aria-haspopup="menu"
                 aria-expanded={convMenuOpen}
@@ -3847,12 +3907,12 @@ export default function Chat() {
               {convMenuOpen && (
                 <div
                   ref={convMenuRef}
-                  className="absolute right-0 top-10 z-20 w-48 rounded border border-slate-200 bg-white shadow dark:border-slate-700 dark:bg-slate-900"
+                  className="absolute right-0 top-11 z-20 w-48 rounded-xl border border-ui-border bg-ui-list p-1 shadow-xl shadow-slate-900/10 dark:shadow-black/40"
                   role="menu"
                 >
                   <button
                     type="button"
-                    className="w-full text-left px-3 py-2 text-sm text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-left text-sm text-ui-text hover:bg-ui-hover"
                     onClick={() => {
                       if (activePinKey) togglePin(activePinKey);
                       setConvMenuOpen(false);
@@ -3864,34 +3924,42 @@ export default function Chat() {
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => openRightProfile()}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-ui-border bg-ui-btn text-ui-muted hover:bg-ui-hover hover:text-ui-text"
+              title={activeIsDM ? "Ver perfil" : "Ver membros"}
+              aria-label={activeIsDM ? "Ver perfil" : "Ver membros"}
+            >
+              <GroupGlyph size={36} />
+            </button>
           </div>
         </div>
-        {!active && (
-          <div className="flex-1 grid place-items-center p-6">
-            <div className="text-center text-slate-600 dark:text-slate-300">
-              <div className="mx-auto dark:bg-slate-700 grid place-items-center">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="w-8 h-8 text-slate-400 dark:text-slate-300"
-                >
-                  <path d="M19.5 6.75v10.5A2.25 2.25 0 0 1 17.25 19.5H6.75A2.25 2.25 0 0 1 4.5 17.25V6.75A2.25 2.25 0 0 1 6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75ZM8.25 9A.75.75 0 0 0 7.5 9.75v6a.75.75 0 0 0 1.5 0v-6A.75.75 0 0 0 8.25 9Zm4.5 0a.75.75 0 0 0-.75.75v6a.75.75 0 0 0 1.5 0v-6A.75.75 0 0 0 12.75 9Zm4.5.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 1.5 0Z" />
-                </svg>
+        {showEmptyState && (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="max-w-sm text-center">
+              <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="mx-auto h-20 w-20 text-ui-primary/60 dark:text-slate-400" aria-hidden="true">
+                <path d="M38 14H14a6 6 0 0 0-6 6v14a6 6 0 0 0 6 6h3v8l9-8h12a6 6 0 0 0 6-6V20a6 6 0 0 0-6-6Z" />
+                <path d="M44 24h6a6 6 0 0 1 6 6v12a6 6 0 0 1-6 6h-2v7l-8-7h-8a6 6 0 0 1-5.6-3.9" />
+                <circle cx="38" cy="39" r="1.3" fill="currentColor" stroke="none" />
+                <circle cx="44" cy="39" r="1.3" fill="currentColor" stroke="none" />
+                <circle cx="50" cy="39" r="1.3" fill="currentColor" stroke="none" />
+              </svg>
+              <div className="mt-4 text-base font-semibold text-ui-text">
+                {active ? "Inicie uma conversa" : "Selecione uma conversa"}
               </div>
-              <div className="text-lg font-semibold">
-                Selecione uma conversa
-              </div>
-              <div className="text-sm">
-                {"Escolha um grupo ou contato \u00E0 esquerda."}
+              <div className="mt-1.5 text-sm text-ui-muted">
+                {active
+                  ? "Envie uma mensagem para a equipe ou selecione um contato para começar a conversar."
+                  : "Escolha um grupo ou contato à esquerda para começar."}
               </div>
             </div>
           </div>
         )}
         <div
           ref={listRef}
-          className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 ${
-            !active ? "hidden" : ""
+          className={`flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 ${
+            showEmptyState ? "hidden" : ""
           }`}
         >
           <div className="flex min-h-full flex-col">
@@ -3914,8 +3982,8 @@ export default function Chat() {
               {messages.map((m, i) => {
                 const mine = (m.author?.id || m.authorId) === user?.id;
               const bubbleClass = mine
-                ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-md break-words"
-                : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-white text-slate-800 px-4 py-2.5 rounded-2xl rounded-tl-md shadow-md border border-slate-200/60 break-words";
+                ? "min-w-0 w-fit max-w-[min(75%,_600px)] bg-ui-primary text-white px-4 py-2.5 rounded-2xl rounded-tr-md shadow-sm shadow-blue-600/20 break-words"
+                : "min-w-0 w-fit max-w-[min(65%,_560px)] bg-ui-bubble-other text-ui-bubble-other-text px-4 py-2.5 rounded-2xl rounded-tl-md shadow-sm border border-ui-border break-words";
               const lineClass = mine
                 ? "flex justify-end mb-2 items-end gap-1"
                 : "flex justify-start mb-2 items-end gap-1";
@@ -3995,7 +4063,7 @@ export default function Chat() {
               return (
               <div key={m.id} id={`msg-${m.id}`} className="w-full">
                 {showDate && (
-                  <div className="max-w-32 mx-auto rounded-full text-center text-xs bg-sky-600  text-slate-100 my-2">
+                  <div className="mx-auto my-3 w-fit rounded-full border border-ui-border bg-ui-btn px-3 py-1 text-center text-[11px] font-medium text-ui-muted">
                     {dateLabel}
                   </div>
                 )}
@@ -4038,7 +4106,7 @@ export default function Chat() {
                     }`}
                   >
                     {!mine && (
-                      <div className="mb-1 text-xs font-semibold text-slate-600">
+                      <div className="mb-1 text-xs font-semibold" style={{ color: avatarColor(m.author?.name) }}>
                         {m.author?.name || "Contato"}
                       </div>
                     )}
@@ -4544,7 +4612,7 @@ export default function Chat() {
           onDragEnter={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDropFiles}
-          className={`chat-composer relative flex flex-col gap-2 p-3 border-t border-slate-200/70 bg-white/90 dark:bg-slate-900/70 backdrop-blur ${
+          className={`chat-composer relative flex flex-col gap-2 border-t border-ui-border bg-ui-composer px-5 py-2.5 ${
             !active ? "hidden" : ""
           }`}
         >
@@ -4606,19 +4674,7 @@ export default function Chat() {
               </div>
             </div>
           )}
-          <div className="flex w-full items-center gap-2 flex-wrap md:flex-nowrap">
-            <button
-              type="button"
-              ref={emojiBtnRef}
-              onClick={() =>
-                showEmoji ? setShowEmoji(false) : openEmojiPopover()
-              }
-              title="Emojis"
-              className="flex-shrink-0 px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-              aria-label="Emojis"
-            >
-              <IconEmoji className="w-5 h-5" />
-            </button>
+          <div className="flex w-full items-end gap-2.5">
             <button
               type="button"
               onClick={() => {
@@ -4627,24 +4683,13 @@ export default function Chat() {
                 } catch {}
                 fileInputRef.current?.click();
               }}
-              title="Anexar"
-              className="inline-flex shrink-0 items-center justify-center p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-              aria-label="Anexar"
-              style={{ fontSize: 0 }}
+              title="Anexar arquivo"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ui-border bg-ui-btn text-ui-muted transition-colors hover:bg-ui-hover hover:text-ui-text"
+              aria-label="Anexar arquivo"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-5 h-5"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                 <path d="M21.44 11.05l-9.19 9.19a5 5 0 11-7.07-7.07l9.19-9.19a3 3 0 114.24 4.24l-9.19 9.19a1 1 0 11-1.41-1.41l8.49-8.49" />
               </svg>
-              <span className="sr-only">Anexar arquivo</span>
             </button>
             <input
               ref={fileInputRef}
@@ -4657,171 +4702,162 @@ export default function Chat() {
               }}
               className="hidden"
             />
-            <textarea
-              ref={inputRef}
-              value={text}
-              onChange={(e) => {
-                const value = e.target.value;
-                setText(value);
-                updateMentionState(value, e.target.selectionStart);
-              }}
-              onKeyDown={(e) => {
-                if (mentionOpen && mentionSuggestions.length) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setMentionIndex((idx) =>
-                      (idx + 1) % mentionSuggestions.length
-                    );
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setMentionIndex((idx) =>
-                      (idx - 1 + mentionSuggestions.length) %
-                      mentionSuggestions.length
-                    );
-                    return;
-                  }
-                  if (e.key === "Enter" || e.key === "Tab") {
-                    e.preventDefault();
-                    applyMention(mentionSuggestions[mentionIndex] || null);
-                    return;
-                  }
-                  if (e.key === "Escape") {
+            <div className="flex min-w-0 flex-1 items-end rounded-xl border border-ui-border bg-ui-input transition-colors focus-within:border-ui-primary/60 focus-within:ring-2 focus-within:ring-ui-primary/15">
+              <textarea
+                ref={inputRef}
+                value={text}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setText(value);
+                  updateMentionState(value, e.target.selectionStart);
+                }}
+                onKeyDown={(e) => {
+                  if (mentionOpen && mentionSuggestions.length) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMentionIndex((idx) =>
+                        (idx + 1) % mentionSuggestions.length
+                      );
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMentionIndex((idx) =>
+                        (idx - 1 + mentionSuggestions.length) %
+                        mentionSuggestions.length
+                      );
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      applyMention(mentionSuggestions[mentionIndex] || null);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMentionOpen(false);
+                      setMentionQuery("");
+                      mentionRangeRef.current = null;
+                      return;
+                    }
+                  } else if (mentionOpen && e.key === "Escape") {
                     e.preventDefault();
                     setMentionOpen(false);
                     setMentionQuery("");
                     mentionRangeRef.current = null;
                     return;
                   }
-                } else if (mentionOpen && e.key === "Escape") {
-                  e.preventDefault();
-                  setMentionOpen(false);
-                  setMentionQuery("");
-                  mentionRangeRef.current = null;
-                  return;
-                }
-                if (
-                  e.key === "Enter" &&
-                  !e.shiftKey &&
-                  !e.altKey &&
-                  !e.ctrlKey &&
-                  !e.metaKey &&
-                  !e.isComposing
-                ) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              onKeyUp={(e) => {
-                const caret = e.currentTarget.selectionStart;
-                updateMentionState(e.currentTarget.value, caret);
-              }}
-              onClick={(e) => {
-                const caret = e.currentTarget.selectionStart;
-                updateMentionState(e.currentTarget.value, caret);
-              }}
-              onPaste={(e) => {
-                try {
-                  const items = e.clipboardData?.items || [];
-                  for (let i = 0; i < items.length; i++) {
-                    const it = items[i];
-                    if (
-                      it &&
-                      typeof it.type === "string" &&
-                      it.type.startsWith("image/")
-                    ) {
-                      const blob = it.getAsFile();
-                      if (blob) {
-                        const fname = `paste-${Date.now()}.${(
-                          blob.type.split("/")[1] || "png"
-                        ).replace(/[^a-z0-9]/gi, "")}`;
-                        const f = new File([blob], fname, {
-                          type: blob.type || "image/png",
-                        });
-                        addAttachments([f]);
-                        e.preventDefault();
-                        break;
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.altKey &&
+                    !e.ctrlKey &&
+                    !e.metaKey &&
+                    !e.isComposing
+                  ) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  const caret = e.currentTarget.selectionStart;
+                  updateMentionState(e.currentTarget.value, caret);
+                }}
+                onClick={(e) => {
+                  const caret = e.currentTarget.selectionStart;
+                  updateMentionState(e.currentTarget.value, caret);
+                }}
+                onPaste={(e) => {
+                  try {
+                    const items = e.clipboardData?.items || [];
+                    for (let i = 0; i < items.length; i++) {
+                      const it = items[i];
+                      if (
+                        it &&
+                        typeof it.type === "string" &&
+                        it.type.startsWith("image/")
+                      ) {
+                        const blob = it.getAsFile();
+                        if (blob) {
+                          const fname = `paste-${Date.now()}.${(
+                            blob.type.split("/")[1] || "png"
+                          ).replace(/[^a-z0-9]/gi, "")}`;
+                          const f = new File([blob], fname, {
+                            type: blob.type || "image/png",
+                          });
+                          addAttachments([f]);
+                          e.preventDefault();
+                          break;
+                        }
                       }
                     }
+                  } catch {}
+                }}
+                placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
+                rows={1}
+                className="block max-h-40 min-h-[38px] w-full resize-none bg-transparent py-2.5 pl-4 pr-2 text-sm text-ui-text placeholder:text-ui-muted focus:outline-none"
+              />
+              <div className="flex shrink-0 items-center gap-0.5 py-1 pr-1.5">
+                {recording && (
+                  <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-red-500" aria-live="polite">
+                    <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    {recTime > 0 ? `${recTime}s` : "REC"}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => (recording ? stopRecording() : startRecording())}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                    recording ? "bg-red-500 text-white hover:bg-red-600" : "text-ui-muted hover:bg-ui-hover hover:text-ui-text"
+                  }`}
+                  title={recording ? "Parar e enviar áudio" : "Gravar áudio"}
+                  aria-label={recording ? "Parar e enviar áudio" : "Gravar áudio"}
+                >
+                  {recording ? (
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-[18px] w-[18px]">
+                      <rect x="9" y="3" width="6" height="11" rx="3" />
+                      <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  ref={emojiBtnRef}
+                  onClick={() =>
+                    showEmoji ? setShowEmoji(false) : openEmojiPopover()
                   }
-                } catch {}
-              }}
-              placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
-              rows={1}
-              className="flex-1 min-w-0 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 resize-y min-h-[40px]"
-            />
+                  title="Emojis"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ui-muted transition-colors hover:bg-ui-hover hover:text-ui-text"
+                  aria-label="Emojis"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-5 w-5" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
+                    <path d="M9 9.5h.01M15 9.5h.01" strokeWidth="2.6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => {
-                if ((text || "").trim() || attachments.length) {
-                  if (!sending) sendMessage();
-                } else {
-                  recording ? stopRecording() : startRecording();
-                }
+                if (sending) return;
+                if (recording) stopRecording();
+                else sendMessage();
               }}
-              className={`${
-                sending
-                  ? "bg-blue-400 text-white cursor-wait"
-                  : (text || "").trim() || attachments.length
-                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow"
-                  : recording
-                  ? "bg-red-600 text-white hover:bg-red-700 shadow"
-                  : "bg-slate-200 text-slate-700 hover:bg-slate-300 shadow"
-              } inline-flex items-center justify-center rounded-full h-10 flex-shrink-0 transition ${
-                recording && !((text || "").trim() || attachments.length)
-                  ? "px-4 gap-2"
-                  : "w-10"
+              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-md shadow-blue-600/30 transition-colors ${
+                sending ? "cursor-wait bg-ui-primary/70" : "bg-ui-primary hover:bg-ui-primary-hover"
               }`}
-              title={
-                sending
-                  ? "Enviando..."
-                  : (text || "").trim() || attachments.length
-                  ? "Enviar"
-                  : recording
-                  ? "Parar gravação"
-                  : "Gravar áudio"
-              }
+              title={sending ? "Enviando..." : "Enviar"}
+              aria-label="Enviar"
               disabled={sending}
             >
-              {(text || "").trim() || attachments.length ? (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="w-5 h-5"
-                >
-                  <path d="M2.31 20.87 22 12 2.31 3.13a.75.75 0 0 0-.98.97L4.7 11.1c.1.25.1.53 0 .78l-3.37 7a.75.75 0 0 0 .98.98Z" />
-                </svg>
-              ) : recording ? (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="w-5 h-5"
-                >
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-              ) : (
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="w-5 h-5"
-                >
-                  <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V7a3.5 3.5 0 1 0-7 0v4a3.5 3.5 0 0 0 3.5 3.5Zm5-3.5a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V20h2v-2.08A7 7 0 0 0 19 11h-2Z" />
-                </svg>
-              )}
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                <path d="M3.4 20.4 21.85 12.5a.55.55 0 0 0 0-1L3.4 3.6a.55.55 0 0 0-.76.63L4.6 10.6a1 1 0 0 0 .8.7l7.1 1.2-7.1 1.2a1 1 0 0 0-.8.7l-1.96 5.37a.55.55 0 0 0 .76.63Z" />
+              </svg>
             </button>
-            {recording && !((text || "").trim() || attachments.length) && (
-              <span
-                className="text-xs text-red-600 inline-flex items-center gap-1"
-                aria-live="polite"
-              >
-                <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
-                {recTime > 0 ? `${recTime}s` : "REC"}
-              </span>
-            )}
           </div>
           {Boolean((text || "").trim() || attachments.length) && err && (
             <div className="text-sm text-red-600">{err}</div>
@@ -5705,13 +5741,62 @@ function StatusTicks({ read, title }) {
   );
 }
 
-function Avatar({ url, name, size = 28, status, showStatus = false }) {
+// Cores das iniciais (definidas pelo nome, sempre a mesma cor para a mesma pessoa)
+const AVATAR_COLORS = ["#6366f1", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#4f9cf7"];
+function avatarColor(name) {
+  const text = String(name || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
+function initialsOf(name) {
+  const first = String(name || "").trim().split(/s+/)[0] || "U";
+  return first.slice(0, 2).toUpperCase();
+}
+
+function startOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+// Horário curto da lista: "14:32", "Ontem" ou "12/10"
+function formatListTime(ts) {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "";
+  const diff = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+  if (diff === 0) return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  if (diff === 1) return "Ontem";
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+// "hoje, 14:32", "ontem, 09:10" ou "12/10, 08:00"
+function formatDayAndTime(ts) {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const diff = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+  if (diff === 0) return `hoje, ${time}`;
+  if (diff === 1) return `ontem, ${time}`;
+  return `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}, ${time}`;
+}
+
+function GroupGlyph({ size }) {
+  const icon = Math.round(size * 0.5);
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" width={icon} height={icon} aria-hidden="true">
+      <path d="M12 12.75a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm-6.75-1.5a2.625 2.625 0 1 0 0-5.25 2.625 2.625 0 0 0 0 5.25Zm13.5 0a2.625 2.625 0 1 0 0-5.25 2.625 2.625 0 0 0 0 5.25ZM12 14.25c-3.04 0-5.625 1.69-5.625 3.938v.562c0 .414.336.75.75.75h9.75a.75.75 0 0 0 .75-.75v-.562c0-2.248-2.585-3.938-5.625-3.938Zm-6.94.18C3.3 14.66 1.5 15.84 1.5 17.4v.6c0 .414.336.75.75.75h2.67a3.4 3.4 0 0 1-.045-.562c0-1.36.6-2.6 1.6-3.58l-1.415-.178Zm13.88 0-1.415.178c1 .98 1.6 2.22 1.6 3.58 0 .19-.016.378-.045.562h2.67a.75.75 0 0 0 .75-.75v-.6c0-1.56-1.8-2.74-3.56-2.97Z" />
+    </svg>
+  );
+}
+
+function Avatar({ url, name, size = 28, status, showStatus = false, variant = "person" }) {
   const [broken, setBroken] = useState(false);
   const containerStyle = {
     position: "relative",
     width: size,
     height: size,
     display: "inline-block",
+    flexShrink: 0,
   };
   const imgStyle = {
     width: size,
@@ -5721,15 +5806,14 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     flexShrink: 0,
     display: "block",
   };
-  const initials = (name || "U").trim().slice(0, 2).toUpperCase();
   const dotColor = (() => {
     const s = String(status || "").toLowerCase();
-    if (s === "online") return "#16a34a"; // green-600
-    if (s === "busy" || s === "ocupado") return "#dc2626"; // red-600
-    if (s === "away" || s === "ausente") return "#f59e0b"; // amber-500
-    return "#94a3b8"; // slate-400 (offline/unknown)
+    if (s === "online") return "#22c55e";
+    if (s === "busy" || s === "ocupado") return "#dc2626";
+    if (s === "away" || s === "ausente") return "#f59e0b";
+    return "#94a3b8";
   })();
-  const dotSize = Math.max(8, Math.floor(size * 0.32));
+  const dotSize = Math.max(8, Math.floor(size * 0.3));
   const dotStyle = {
     position: "absolute",
     right: -1,
@@ -5738,8 +5822,7 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
     height: dotSize,
     borderRadius: "50%",
     background: dotColor,
-    border: "2px solid rgba(255,255,255,0.95)",
-    boxShadow: "0 0 0 1px rgba(15,23,42,0.08)",
+    border: "2px solid var(--ui-list)",
   };
   return (
     <span style={containerStyle}>
@@ -5750,20 +5833,27 @@ function Avatar({ url, name, size = 28, status, showStatus = false }) {
           style={imgStyle}
           onError={() => setBroken(true)}
         />
+      ) : variant === "group" ? (
+        <span
+          style={{ ...imgStyle, display: "grid", placeItems: "center" }}
+          className="bg-ui-avatar-group-bg text-ui-avatar-group-fg"
+        >
+          <GroupGlyph size={size} />
+        </span>
       ) : (
-        <div
+        <span
           style={{
             ...imgStyle,
-            background: "#cbd5e1",
-            color: "#334155",
+            background: avatarColor(name),
+            color: "#ffffff",
             display: "grid",
             placeItems: "center",
-            fontSize: Math.max(10, Math.floor(size * 0.42)),
-            fontWeight: "bold",
+            fontSize: Math.max(10, Math.floor(size * 0.36)),
+            fontWeight: 600,
           }}
         >
-          {initials}
-        </div>
+          {initialsOf(name)}
+        </span>
       )}
       {showStatus && <span style={dotStyle} />}
     </span>

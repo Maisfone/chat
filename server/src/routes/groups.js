@@ -13,7 +13,17 @@ router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
     where: { members: { some: { userId: me } }, directThread: { is: null } },
-    orderBy: { lastMessageAt: 'desc' }
+    orderBy: { lastMessageAt: 'desc' },
+    include: {
+      _count: { select: { members: true } },
+      // Última mensagem (prévia na lista de conversas)
+      messages: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { id: true, type: true, content: true, createdAt: true, authorId: true }
+      }
+    }
   })
   // Anexa contagem de não lidas
   // Duas consultas no total (em vez de duas por grupo)
@@ -49,7 +59,7 @@ router.get('/', async (req, res) => {
     const gid = row.message?.groupId
     if (gid) mentionMap.set(gid, (mentionMap.get(gid) || 0) + 1)
   }
-  res.json(groups.map((g) => ({ ...g, _unread: unreadMap.get(g.id) || 0, _mentions: mentionMap.get(g.id) || 0 })))
+  res.json(groups.map(({ _count, messages, ...g }) => ({ ...g, lastMessage: messages?.[0] || null, _memberCount: _count?.members || 0, _unread: unreadMap.get(g.id) || 0, _mentions: mentionMap.get(g.id) || 0 })))
 })
 
 // Admin: listar todos os grupos
