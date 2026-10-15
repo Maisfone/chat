@@ -2034,7 +2034,19 @@ export default function Chat() {
   ]);
 
   // Open DM with a person, creating if needed
+  // Evita abrir/criar a mesma conversa duas vezes com cliques repetidos
+  const startingConversationRef = useRef(new Set());
   async function startConversation(otherId) {
+    if (!otherId || startingConversationRef.current.has(otherId)) return;
+    startingConversationRef.current.add(otherId);
+    try {
+      await openConversationWith(otherId);
+    } finally {
+      startingConversationRef.current.delete(otherId);
+    }
+  }
+
+  async function openConversationWith(otherId) {
     setErr("");
     try {
       const dm = await api.get(`/dm/with/${otherId}`);

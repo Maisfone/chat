@@ -75,14 +75,24 @@ router.post('/:userId', async (req, res) => {
     const exists = await prisma.user.findUnique({ where: { id: other }, select: { id: true, name: true } })
     if (!exists) return res.status(404).json({ error: 'Usuário não encontrado' })
 
-    // Cria grupo privado e membros
-    const group = await prisma.group.create({ data: { name: `DM`, isPrivate: true } })
-    await prisma.groupMember.createMany({ data: [
-      { groupId: group.id, userId: me },
-      { groupId: group.id, userId: other }
-    ] })
-
-    thread = await prisma.directThread.create({ data: { groupId: group.id, userAId: a, userBId: b } })
+    // Grupo, membros e vínculo são criados juntos (transação). Antes, dois pedidos
+    // simultâneos criavam dois grupos "DM"; o segundo falhava no vínculo e o grupo
+    // ficava órfão, aparecendo na lista como um grupo "DM" com 2 pessoas.
+    try {
+      thread = await prisma.$transaction(async (tx) => {
+        const group = await tx.group.create({ data: { name: `DM`, isPrivate: true } })
+        await tx.groupMember.createMany({ data: [
+          { groupId: group.id, userId: me },
+          { groupId: group.id, userId: other }
+        ] })
+        return tx.directThread.create({ data: { groupId: group.id, userAId: a, userBId: b } })
+      })
+    } catch (e) {
+      // Outro pedido criou a mesma DM ao mesmo tempo: usa a que já existe
+      if (e?.code !== 'P2002') throw e
+      thread = await prisma.directThread.findFirst({ where: { userAId: a, userBId: b } })
+      if (!thread) throw e
+    }
   }
 
   // Retorna informações úteis
