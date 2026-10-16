@@ -596,13 +596,41 @@ export default function Chat() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const conversationCacheRef = useRef({});
   const activeIdRef = useRef(null);
+  // Mantém a conversa no final enquanto o conteúdo cresce (imagens carregando, prévias),
+  // a menos que a pessoa tenha rolado para cima para ler mensagens antigas
+  const stickToBottomRef = useRef(true);
   const scrollToBottom = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
+    stickToBottomRef.current = true;
     try {
       el.scrollTop = el.scrollHeight;
     } catch {}
   }, []);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    // Só "desgruda" do final quando a pessoa rola para cima. O evento de rolagem chega
+    // depois do conteúdo crescer, então não dá para decidir só pela distância do final.
+    let lastTop = el.scrollTop;
+    const onScroll = () => {
+      const top = el.scrollTop;
+      const nearBottom = el.scrollHeight - top - el.clientHeight < 80;
+      if (top < lastTop - 2) stickToBottomRef.current = nearBottom;
+      else if (nearBottom) stickToBottomRef.current = true;
+      lastTop = top;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const content = el.firstElementChild;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    if (content) observer.observe(content);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [active?.id]);
   const mediaRecRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const recTimerRef = useRef(null);
@@ -882,6 +910,14 @@ export default function Chat() {
   });
   const soundOn = true;
   const [pushError, setPushError] = useState("");
+  // Aviso rápido no topo da conversa (some sozinho)
+  const [notice, setNotice] = useState("");
+  const noticeTimerRef = useRef(null);
+  const showNotice = useCallback((message) => {
+    setNotice(message);
+    clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setNotice(""), 4000);
+  }, []);
   useEffect(() => {
     const updateFocus = () => {
       try {
@@ -2482,6 +2518,21 @@ export default function Chat() {
 
   function startReply(m) {
     setReplyTo(m);
+    // leva o cursor direto para o campo de mensagem
+    setTimeout(() => {
+      try {
+        inputRef.current?.focus();
+      } catch {}
+    }, 0);
+  }
+  // Texto/ícone/miniatura usados na citação de resposta
+  function describeReply(msg) {
+    if (!msg) return { text: "", kind: "text", thumb: null };
+    if (msg.deletedAt) return { text: "Mensagem apagada", kind: "deleted", thumb: null };
+    if (msg.type === "text") return { text: msg.content || "", kind: "text", thumb: null };
+    if (isImageMessage(msg)) return { text: "Imagem", kind: "image", thumb: absUrl(String(msg.content || "").split("?")[0]) };
+    if (msg.type === "audio") return { text: "Mensagem de voz", kind: "audio", thumb: null };
+    return { text: fileNameFromUrl(msg.content) || "Arquivo", kind: "file", thumb: null };
   }
   async function deleteMessage(m) {
     if (!confirm("Excluir esta mensagem?")) return;
@@ -3225,6 +3276,11 @@ export default function Chat() {
 
   return (
     <div className="relative flex h-full min-h-full w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950">
+      {notice && (
+        <div role="status" className="absolute left-1/2 top-20 z-50 max-w-md -translate-x-1/2 rounded-xl border border-ui-border bg-ui-list px-4 py-2.5 text-sm text-ui-text shadow-xl">
+          {notice}
+        </div>
+      )}
       {pushError && (
         <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-amber-100 px-4 py-2 text-sm text-amber-800 shadow">
           {pushError}
@@ -4174,25 +4230,21 @@ export default function Chat() {
                       </div>
                     )}
                     {m.replyTo && (
-                      <button
-                        type="button"
-                        onClick={() => scrollToMessage(m.replyTo.id)}
-                        className="mb-1 w-full text-left pl-2 border-l-4 border-blue-400 text-xs text-slate-600 hover:bg-blue-50 focus:bg-blue-100 focus:outline-none focus:ring-1 focus:ring-blue-300 rounded-sm transition dark:hover:bg-slate-800/60 dark:focus:bg-slate-800/90"
-                        title="Abrir mensagem original"
-                      >
-                        <div className="font-medium">
-                          {m.replyTo.author?.name || "Mensagem"}
-                        </div>
-                        <div className="truncate opacity-90">
-                          {m.replyTo.type === "text"
-                            ? m.replyTo.content
-                            : isImageMessage(m.replyTo)
-                            ? "Imagem"
-                            : m.replyTo.type === "audio"
-                            ? "Áudio"
-                            : "Anexo"}
-                        </div>
-                      </button>
+                      <ReplyQuote
+                        variant={mine ? "mine" : "other"}
+                        authorName={
+                          (m.replyTo.author?.id || m.replyTo.authorId) === user?.id
+                            ? "Você"
+                            : m.replyTo.author?.name || "Mensagem"
+                        }
+                        authorColor={avatarColor(m.replyTo.author?.name)}
+                        {...describeReply(m.replyTo)}
+                        onClick={() => {
+                          if (!scrollToMessage(m.replyTo.id)) {
+                            showNotice("A mensagem original é mais antiga e não está carregada. Role para cima e use \"Carregar mensagens anteriores\".");
+                          }
+                        }}
+                      />
                     )}
                     {m.deletedAt ? (
                       <div className="italic opacity-70">Mensagem apagada</div>
@@ -4536,36 +4588,33 @@ export default function Chat() {
         </div>
 
         {replyTo && (
-          <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 flex items-start gap-2">
-            <div className="border-l-4 border-blue-500 pl-2 text-sm text-slate-700 flex-1">
-              <div className="font-medium">
-                Respondendo {replyTo.author?.name || "mensagem"}
-              </div>
-              <div className="truncate">
-                {replyTo.type === "text"
-                  ? replyTo.content
-                  : isImageMessage(replyTo)
-                  ? "Imagem"
-                  : replyTo.type === "audio"
-                  ? "Áudio"
-                  : "Anexo"}
-              </div>
+          <div className="flex items-center gap-3 border-t border-ui-border bg-ui-composer px-5 pt-2.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0 text-ui-primary" aria-hidden="true">
+              <path d="M10 19l-7-7 7-7" />
+              <path d="M3 12h12a6 6 0 0 1 6 6v1" />
+            </svg>
+            <div className="min-w-0 flex-1">
+              <ReplyQuote
+                variant="bar"
+                authorName={
+                  (replyTo.author?.id || replyTo.authorId) === user?.id
+                    ? "Respondendo a você mesmo"
+                    : `Respondendo a ${replyTo.author?.name || "mensagem"}`
+                }
+                authorColor={avatarColor(replyTo.author?.name)}
+                {...describeReply(replyTo)}
+                onClick={() => scrollToMessage(replyTo.id)}
+              />
             </div>
             <button
-              className="text-slate-500 hover:text-slate-700"
+              type="button"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ui-muted hover:bg-ui-hover hover:text-ui-text"
               onClick={() => setReplyTo(null)}
+              title="Cancelar resposta"
+              aria-label="Cancelar resposta"
             >
-              Cancelar
+              <IconX className="h-4 w-4" />
             </button>
-            {recording && !((text || "").trim() || attachments.length) && (
-              <span
-                className="text-xs text-red-600 inline-flex items-center gap-1"
-                aria-live="polite"
-              >
-                <span className="inline-block w-2 h-2 bg-red-600 rounded-full" />{" "}
-                {recTime > 0 ? `${recTime}s` : "REC"}
-              </span>
-            )}
           </div>
         )}
 
@@ -5890,6 +5939,58 @@ function formatDayAndTime(ts) {
   if (diff === 0) return `hoje, ${time}`;
   if (diff === 1) return `ontem, ${time}`;
   return `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}, ${time}`;
+}
+
+// Citação da mensagem respondida. Variantes: dentro da minha bolha (azul), na bolha
+// de outra pessoa, e na barra "Respondendo..." acima do campo.
+function ReplyQuote({ variant, authorName, authorColor, text, kind, thumb, onClick }) {
+  const styles = {
+    mine: "bg-white/15 hover:bg-white/25",
+    other: "bg-ui-hover hover:brightness-95 dark:hover:brightness-125",
+    bar: "bg-ui-input hover:bg-ui-hover border border-ui-border",
+  }[variant];
+  const nameStyle = variant === "mine" ? { color: "#ffffff" } : { color: authorColor };
+  const textClass = variant === "mine" ? "text-white/85" : "text-ui-muted";
+  const icon =
+    kind === "audio" ? (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+      </svg>
+    ) : kind === "file" ? (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+        <path d="M14 3v5h5" />
+      </svg>
+    ) : kind === "image" ? (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <circle cx="9" cy="10" r="1.6" />
+        <path d="m21 16-5-5-8 9" />
+      </svg>
+    ) : null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Ir para a mensagem original"
+      className={`${variant === "bar" ? "mb-0" : "mb-1.5"} flex w-full min-w-[160px] items-stretch gap-2 overflow-hidden rounded-lg text-left transition ${styles}`}
+    >
+      <span className="w-1 shrink-0" style={{ background: variant === "mine" ? "rgba(255,255,255,0.75)" : authorColor }} />
+      <span className="min-w-0 flex-1 py-1.5 pr-2">
+        <span className="block truncate text-xs font-semibold" style={nameStyle}>
+          {authorName}
+        </span>
+        <span className={`mt-0.5 flex items-center gap-1 text-xs ${textClass} ${kind === "deleted" ? "italic" : ""}`}>
+          {icon}
+          <span className="truncate">{text}</span>
+        </span>
+      </span>
+      {thumb && (
+        <img src={thumb} alt="" className="h-11 w-11 shrink-0 object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      )}
+    </button>
+  );
 }
 
 function GroupGlyph({ size }) {
