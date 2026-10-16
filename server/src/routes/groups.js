@@ -68,11 +68,15 @@ router.get('/all', adminRequired, async (req, res) => {
 
   const groups = await prisma.group.findMany({
     orderBy: { lastMessageAt: 'desc' },
-    include: { directThread: true }
+    include: { directThread: true, _count: { select: { members: true, messages: true } } }
   })
 
   const filtered = includeDMs ? groups : groups.filter((g) => !g.directThread)
-  res.json(filtered.map(({ directThread, ...g }) => g))
+  res.json(filtered.map(({ directThread, _count, ...g }) => ({
+    ...g,
+    memberCount: _count?.members || 0,
+    messageCount: _count?.messages || 0
+  })))
 })
 
 // Participantes de um grupo (visível aos membros)

@@ -67,7 +67,8 @@ router.post('/me/password', async (req, res) => {
     const { current, password } = schema.parse(req.body)
     const user = await prisma.user.findUnique({ where: { id: req.user.id } })
     const ok = await bcrypt.compare(current, user.password)
-    if (!ok) return res.status(401).json({ error: 'Senha atual inválida' })
+    // 400 (e não 401): 401 faria o app encerrar a sessão por engano
+    if (!ok) return res.status(400).json({ error: 'Senha atual inválida' })
     const hash = await bcrypt.hash(password, 10)
     // Sessões antigas (outros dispositivos) deixam de valer; o cliente atual recebe um token novo
     const updated = await prisma.user.update({ where: { id: req.user.id }, data: { password: hash, passwordChangedAt: new Date() } })
@@ -133,6 +134,17 @@ router.patch('/:id', adminRequired, async (req, res) => {
   })
   try {
     const data = schema.parse(req.body)
+    // O admin não pode tirar o próprio acesso (ficaria trancado para fora)
+    if (req.params.id === req.user.id && (data.isAdmin === false || data.isBlocked === true)) {
+      return res.status(400).json({ error: 'Você não pode remover seu próprio acesso de admin nem se bloquear.' })
+    }
+    if (data.email) {
+      const taken = await prisma.user.findFirst({
+        where: { email: { equals: data.email, mode: 'insensitive' }, NOT: { id: req.params.id } },
+        select: { id: true }
+      })
+      if (taken) return res.status(409).json({ error: 'E-mail já cadastrado para outro usuário' })
+    }
     const user = await prisma.user.update({ where: { id: req.params.id }, data })
     invalidateUserCache(user.id)
     if (user.isBlocked) {
@@ -142,6 +154,7 @@ router.patch('/:id', adminRequired, async (req, res) => {
     try { req.io?.emit('user:updated', { id: user.id, name: user.name, email: user.email, phone: user.phone, avatarUrl: user.avatarUrl, isBlocked: user.isBlocked, isAdmin: user.isAdmin }) } catch {}
     res.json({ ok: true })
   } catch (e) {
+    if (e?.code === 'P2025') return res.status(404).json({ error: 'Usuário não encontrado' })
     res.status(400).json({ error: 'Falha ao atualizar usuário' })
   }
 })
@@ -197,6 +210,7 @@ async function deleteMessagesByAuthor(tx, authorId) {
 
 router.delete('/:id', adminRequired, async (req, res) => {
   const { id } = req.params
+  if (id === req.user.id) return res.status(400).json({ error: 'Você não pode excluir a própria conta.' })
   const user = await prisma.user.findUnique({ where: { id } })
   if (!user) return res.status(404).json({ error: 'Usuário não encontrado' })
 

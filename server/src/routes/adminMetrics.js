@@ -41,38 +41,38 @@ router.get('/', async (req, res) => {
     const [
       totalUsers,
       totalGroups,
+      totalDirectChats,
       totalMessages,
       totalGroupMembers,
       messagesLast10Minutes,
       messagesLastHour,
       messagesLast24Hours,
-      groupsActiveLastHour,
-      groupsActiveLast24Hours,
     ] = await prisma.$transaction([
       prisma.user.count(),
-      prisma.group.count(),
-      prisma.message.count(),
-      prisma.groupMember.count(),
+      // DMs também são "Group" no banco; aqui contam só os grupos de verdade
+      prisma.group.count({ where: { directThread: { is: null } } }),
+      prisma.directThread.count(),
+      prisma.message.count({ where: { deletedAt: null } }),
+      prisma.groupMember.count({ where: { group: { directThread: { is: null } } } }),
       prisma.message.count({ where: { createdAt: { gte: last10Minutes } } }),
       prisma.message.count({ where: { createdAt: { gte: lastHour } } }),
       prisma.message.count({ where: { createdAt: { gte: last24Hours } } }),
-      prisma.group.count({ where: { lastMessageAt: { gte: lastHour } } }),
-      prisma.group.count({ where: { lastMessageAt: { gte: last24Hours } } }),
     ])
     const [
       activeUsersLast24Hours,
       lastMessage,
       recentMessages,
-      busiestGroupsRaw,
+      activeLastHourRaw,
+      activeLast24HoursRaw,
     ] = await Promise.all([
       prisma.user.count({
         where: { messages: { some: { createdAt: { gte: last24Hours } } } },
       }),
       prisma.message.findFirst({
+        where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         include: {
           author: { select: { id: true, name: true } },
-          group: { select: { id: true, name: true } },
         },
       }),
       prisma.message.findMany({
@@ -80,25 +80,40 @@ router.get('/', async (req, res) => {
         select: { createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
+      // Conversas ativas = com mensagens no período (lastMessageAt também muda ao criar o grupo)
+      prisma.message.groupBy({
+        by: ['groupId'],
+        where: { createdAt: { gte: lastHour } },
+        _count: { groupId: true },
+      }),
       prisma.message.groupBy({
         by: ['groupId'],
         where: { createdAt: { gte: last24Hours } },
         _count: { groupId: true },
         orderBy: { _count: { groupId: 'desc' } },
-        take: 3,
       }),
     ])
-    const busiestGroupIds = busiestGroupsRaw.map((item) => item.groupId)
-    const busiestGroupNames = busiestGroupIds.length
+    const busiestRaw = activeLast24HoursRaw.slice(0, 5)
+    const nameIds = Array.from(new Set([...busiestRaw.map((item) => item.groupId), lastMessage?.groupId].filter(Boolean)))
+    const nameRows = nameIds.length
       ? await prisma.group.findMany({
-        where: { id: { in: busiestGroupIds } },
-        select: { id: true, name: true },
+        where: { id: { in: nameIds } },
+        select: {
+          id: true,
+          name: true,
+          directThread: { select: { userA: { select: { name: true } }, userB: { select: { name: true } } } },
+        },
       })
       : []
-    const groupNameMap = new Map(busiestGroupNames.map((group) => [group.id, group.name]))
-    const busiestGroups = busiestGroupsRaw.map((item) => ({
+    // DMs aparecem como "Ana ↔ Bruno" em vez do nome interno "DM"
+    const conversationInfo = new Map(nameRows.map((g) => [g.id, {
+      name: g.directThread ? `${g.directThread.userA?.name || '?'} ↔ ${g.directThread.userB?.name || '?'}` : g.name,
+      isDirect: Boolean(g.directThread),
+    }]))
+    const busiestGroups = busiestRaw.map((item) => ({
       groupId: item.groupId,
-      name: groupNameMap.get(item.groupId) || '—',
+      name: conversationInfo.get(item.groupId)?.name || '—',
+      isDirect: conversationInfo.get(item.groupId)?.isDirect || false,
       messages: item._count.groupId,
     }))
     const timeline = buildMinuteTimeline(recentMessages, now, 10)
@@ -107,14 +122,15 @@ router.get('/', async (req, res) => {
     res.json({
       totalUsers,
       totalGroups,
+      totalDirectChats,
       totalMessages,
       totalGroupMembers,
       messagesLast10Minutes,
       messagesLastHour,
       messagesLast24Hours,
       avgMessagesPerMinuteLastHour: messagesLastHour / 60,
-      groupsActiveLastHour,
-      groupsActiveLast24Hours,
+      groupsActiveLastHour: activeLastHourRaw.length,
+      groupsActiveLast24Hours: activeLast24HoursRaw.length,
       activeUsersLast24Hours,
       onlineUsers,
       onlineSessions,
@@ -123,7 +139,7 @@ router.get('/', async (req, res) => {
             id: lastMessage.id,
             createdAt: lastMessage.createdAt,
             groupId: lastMessage.groupId,
-            groupName: lastMessage.group?.name || '',
+            groupName: conversationInfo.get(lastMessage.groupId)?.name || '',
             authorId: lastMessage.authorId,
             authorName: lastMessage.author?.name || '',
           }
@@ -133,7 +149,7 @@ router.get('/', async (req, res) => {
     })
   } catch (error) {
     console.error("Admin metrics error:", error)
-    res.status(500).json({ error: "Falha ao coletar metricas" })
+    res.status(500).json({ error: "Falha ao coletar métricas" })
   }
 })
 
