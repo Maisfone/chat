@@ -3,63 +3,33 @@ import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { adminRequired, authRequired } from '../middleware/auth.js'
 import { handleUploadSingle } from '../lib/storage.js'
+import { unreadCountsFor, unreadMentionCountsFor, lastMessagesFor } from '../lib/conversations.js'
 
 const router = express.Router()
 
 router.use(authRequired)
 
-// Listar grupos do usuário
+// Listar grupos do usuário (4 consultas no total, qualquer que seja o número de grupos)
 router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
     where: { members: { some: { userId: me } }, directThread: { is: null } },
     orderBy: { lastMessageAt: 'desc' },
-    include: {
-      _count: { select: { members: true } },
-      // Última mensagem (prévia na lista de conversas)
-      messages: {
-        where: { deletedAt: null },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-        select: { id: true, type: true, content: true, createdAt: true, authorId: true }
-      }
-    }
+    include: { _count: { select: { members: true } } }
   })
-  // Anexa contagem de não lidas
-  // Duas consultas no total (em vez de duas por grupo)
   const groupIds = groups.map((g) => g.id)
-  const [unreadRows, mentionRows] = groupIds.length
-    ? await Promise.all([
-        prisma.message.groupBy({
-          by: ['groupId'],
-          where: {
-            groupId: { in: groupIds },
-            deletedAt: null,
-            authorId: { not: me },
-            reads: { none: { userId: me } }
-          },
-          _count: { _all: true }
-        }),
-        prisma.messageMention.findMany({
-          where: {
-            userId: me,
-            message: {
-              groupId: { in: groupIds },
-              deletedAt: null,
-              reads: { none: { userId: me } }
-            }
-          },
-          select: { message: { select: { groupId: true } } }
-        })
-      ])
-    : [[], []]
-  const unreadMap = new Map(unreadRows.map((r) => [r.groupId, r._count._all]))
-  const mentionMap = new Map()
-  for (const row of mentionRows) {
-    const gid = row.message?.groupId
-    if (gid) mentionMap.set(gid, (mentionMap.get(gid) || 0) + 1)
-  }
-  res.json(groups.map(({ _count, messages, ...g }) => ({ ...g, lastMessage: messages?.[0] || null, _memberCount: _count?.members || 0, _unread: unreadMap.get(g.id) || 0, _mentions: mentionMap.get(g.id) || 0 })))
+  const [unreadMap, mentionMap, lastMap] = await Promise.all([
+    unreadCountsFor(me, groupIds),
+    unreadMentionCountsFor(me, groupIds),
+    lastMessagesFor(groupIds)
+  ])
+  res.json(groups.map(({ _count, ...g }) => ({
+    ...g,
+    lastMessage: lastMap.get(g.id) || null,
+    _memberCount: _count?.members || 0,
+    _unread: unreadMap.get(g.id) || 0,
+    _mentions: mentionMap.get(g.id) || 0
+  })))
 })
 
 // Admin: listar todos os grupos

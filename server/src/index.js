@@ -132,6 +132,19 @@ async function isGroupMember(userId, groupId) {
   return Boolean(member);
 }
 
+// Presença em lote: junta as mudanças e envia um único evento por segundo para todos.
+// Antes, cada entrada/saída/troca de status gerava um evento para cada pessoa conectada.
+const pendingPresence = new Map();
+function queuePresence(userId, status) {
+  if (userId) pendingPresence.set(userId, status);
+}
+setInterval(() => {
+  if (!pendingPresence.size) return;
+  const users = Array.from(pendingPresence, ([userId, status]) => ({ userId, status }));
+  pendingPresence.clear();
+  io.emit("presence:batch", { users });
+}, 1000).unref();
+
 function safeStatus(value) {
   const status = typeof value === "string" ? value.trim().slice(0, 32) : "";
   return status || "online";
@@ -142,19 +155,22 @@ io.on("connection", (socket) => {
   // Sala pessoal para eventos direcionados (ex.: dm:created)
   socket.join(`user:${userId}`);
   // Entra nas salas de todos os grupos/DMs do usuário (também após reconexões)
-  prisma.groupMember
+  const roomsReady = prisma.groupMember
     .findMany({ where: { userId }, select: { groupId: true } })
     .then((rows) => rows.forEach((r) => socket.join(r.groupId)))
     .catch(() => {});
 
+  // O cliente pede para entrar em cada conversa; só consulta o banco se ainda não estiver na sala
   socket.on("group:join", async (groupId) => {
     try {
+      await roomsReady;
+      if (typeof groupId !== "string" || socket.rooms.has(groupId)) return;
       if (await isGroupMember(userId, groupId)) socket.join(groupId);
     } catch {}
   });
-  socket.on("group:leave", (groupId) => {
-    if (typeof groupId === "string") socket.leave(groupId);
-  });
+  // As salas são controladas pelo servidor (participação no grupo). Sair da sala ao trocar
+  // de conversa fazia as novidades daquele grupo pararem de chegar em tempo real.
+  socket.on("group:leave", () => {});
 
   // WebRTC signaling via rooms
   socket.on("webrtc:join", (room) => {
@@ -188,10 +204,10 @@ io.on("connection", (socket) => {
         // Conta cada conexão uma única vez (o cliente pode reenviar este evento)
         socket.data.presenceMarked = true;
         const { firstSession, status: nextStatus } = markOnline(userId, status);
-        if (firstSession) io.emit("presence:update", { userId, status: nextStatus || "online" });
+        if (firstSession) queuePresence(userId, nextStatus || "online");
       } else {
         const next = updateStatus(userId, status);
-        io.emit("presence:update", { userId, status: next?.status || "online" });
+        queuePresence(userId, next?.status || "online");
       }
       socket.emit("presence:snapshot", { users: getPresenceSnapshot() });
     } catch {}
@@ -199,7 +215,7 @@ io.on("connection", (socket) => {
   socket.on("presence:set", (payload = {}) => {
     try {
       const next = updateStatus(userId, safeStatus(payload?.status));
-      io.emit("presence:update", { userId, status: next?.status || "online" });
+      queuePresence(userId, next?.status || "online");
     } catch {}
   });
   socket.on("presence:who", () => {
@@ -211,7 +227,7 @@ io.on("connection", (socket) => {
     try {
       if (!socket.data.presenceMarked) return;
       const { wentOffline } = markOffline(userId);
-      if (wentOffline) io.emit("presence:update", { userId, status: "offline" });
+      if (wentOffline) queuePresence(userId, "offline");
     } catch {}
   });
 });

@@ -1,41 +1,34 @@
 import express from 'express'
 import { prisma } from '../prisma.js'
 import { authRequired } from '../middleware/auth.js'
+import { unreadCountsFor, lastMessagesFor } from '../lib/conversations.js'
 
 const router = express.Router()
 router.use(authRequired)
 
-// Listar DMs do usuário atual com último recado
+// Listar DMs do usuário atual com último recado (3 consultas no total)
 router.get('/', async (req, res) => {
   const me = req.user.id
   const threads = await prisma.directThread.findMany({
     where: { OR: [{ userAId: me }, { userBId: me }] },
     include: {
-      group: { include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } } },
       userA: { select: { id: true, name: true, avatarUrl: true } },
       userB: { select: { id: true, name: true, avatarUrl: true } }
     },
     orderBy: { group: { lastMessageAt: 'desc' } }
   })
   const groupIds = threads.map((t) => t.groupId)
-  const unreadRows = groupIds.length
-    ? await prisma.message.groupBy({
-        by: ['groupId'],
-        where: {
-          groupId: { in: groupIds },
-          deletedAt: null,
-          authorId: { not: me },
-          reads: { none: { userId: me } }
-        },
-        _count: { _all: true }
-      })
-    : []
-  const unreadMap = new Map(unreadRows.map((r) => [r.groupId, r._count._all]))
-  const data = threads.map((t) => {
-    const other = t.userA.id === me ? t.userB : t.userA
-    return { id: t.id, groupId: t.groupId, other, lastMessage: t.group.messages[0] || null, _unread: unreadMap.get(t.groupId) || 0 }
-  })
-  res.json(data)
+  const [unreadMap, lastMap] = await Promise.all([
+    unreadCountsFor(me, groupIds),
+    lastMessagesFor(groupIds)
+  ])
+  res.json(threads.map((t) => ({
+    id: t.id,
+    groupId: t.groupId,
+    other: t.userA.id === me ? t.userB : t.userA,
+    lastMessage: lastMap.get(t.groupId) || null,
+    _unread: unreadMap.get(t.groupId) || 0
+  })))
 })
 
 // Criar ou retornar DM com um usuário

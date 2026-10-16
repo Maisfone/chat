@@ -70,6 +70,8 @@ model GroupMember {
   userId    String   @map("user_id")
   role      String   @default("member")
   joinedAt  DateTime @default(now()) @map("joined_at")
+  // Até quando a pessoa leu esta conversa (substitui uma linha de MessageRead por mensagem)
+  lastReadAt DateTime? @map("last_read_at")
 
   @@unique([groupId, userId])
   @@index([userId])

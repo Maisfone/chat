@@ -1627,18 +1627,30 @@ export default function Chat() {
         setPresence(map);
       } catch {}
     };
+    // Servidor envia as mudanças de presença em lote (no máximo 1 evento por segundo)
+    const onBatch = (payload = {}) => {
+      const list = Array.isArray(payload.users) ? payload.users : [];
+      if (!list.length) return;
+      setPresence((prev) => {
+        const next = { ...prev };
+        for (const p of list) if (p?.userId) next[p.userId] = p.status || "online";
+        return next;
+      });
+    };
     const onUpdate = (p = {}) => {
       if (!p?.userId) return;
       setPresence((prev) => ({ ...prev, [p.userId]: p.status || "online" }));
     };
     s.on("presence:snapshot", onSnapshot);
     s.on("presence:update", onUpdate);
+    s.on("presence:batch", onBatch);
     s.on("connect", announce);
     announce();
     return () => {
       try {
         s.off("presence:snapshot", onSnapshot);
         s.off("presence:update", onUpdate);
+        s.off("presence:batch", onBatch);
         s.off("connect", announce);
       } catch {}
     };
@@ -2034,6 +2046,41 @@ export default function Chat() {
   ]);
 
   // Open DM with a person, creating if needed
+  // Marca a conversa como lida no máximo 1x por segundo, e só com a janela visível.
+  // Antes, cada mensagem recebida gerava uma requisição imediata de cada pessoa do grupo.
+  const markReadTimerRef = useRef(null);
+  const pendingReadGroupRef = useRef(null);
+  const flushMarkRead = useCallback(() => {
+    const gid = pendingReadGroupRef.current;
+    if (!gid) return;
+    try {
+      if (document.hidden) return; // envia quando a janela voltar a ficar visível
+    } catch {}
+    pendingReadGroupRef.current = null;
+    api.post(`/messages/${gid}/read`, {}).catch(() => {});
+  }, []);
+  const scheduleMarkRead = useCallback(
+    (gid) => {
+      pendingReadGroupRef.current = gid;
+      clearTimeout(markReadTimerRef.current);
+      // 1 a 2 s com variação: evita centenas de navegadores marcando no mesmo instante
+      markReadTimerRef.current = setTimeout(flushMarkRead, 1000 + Math.random() * 1000);
+    },
+    [flushMarkRead]
+  );
+  useEffect(() => {
+    const onVisible = () => {
+      try {
+        if (!document.hidden) flushMarkRead();
+      } catch {}
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearTimeout(markReadTimerRef.current);
+    };
+  }, [flushMarkRead]);
+
   // Evita abrir/criar a mesma conversa duas vezes com cliques repetidos
   const startingConversationRef = useRef(new Set());
   async function startConversation(otherId) {
@@ -2201,11 +2248,7 @@ export default function Chat() {
         })();
         // If the conversation is open and the message is from the other user,
         // mark as read immediately so the sender sees the read status in realtime
-        if (isActive && !mine) {
-          try {
-            api.post(`/messages/${currentId}/read`, {});
-          } catch {}
-        }
+        if (isActive && !mine) scheduleMarkRead(currentId);
         if (shouldNotify) {
           try {
             showNotificationFor(msg);
@@ -2256,17 +2299,18 @@ export default function Chat() {
           const ids = Array.isArray(payload.ids) ? payload.ids : [];
           const uid = payload.userId;
           if (!uid || !ids.length) return;
+          const idSet = new Set(ids);
           setMessages((prev) =>
-            prev.map((m) =>
-              ids.includes(m.id)
-                ? {
-                    ...m,
-                    reads: (m.reads || []).some((r) => r.userId === uid)
-                      ? m.reads || []
-                      : [...(m.reads || []), { userId: uid }],
-                  }
-                : m
-            )
+            prev.map((m) => {
+              if (!idSet.has(m.id)) return m;
+              const readerIds = m.readerIds || [];
+              if (readerIds.includes(uid)) return m;
+              return {
+                ...m,
+                readCount: (m.readCount || 0) + 1,
+                readerIds: readerIds.length < 10 ? [...readerIds, uid] : readerIds,
+              };
+            })
           );
         } catch {}
       };
@@ -2282,6 +2326,11 @@ export default function Chat() {
       s.on("message:updated", onUpdated);
       s.on("message.reaction.updated", onReactionUpdated);
       s.on("messages:read", onReads);
+      // Servidor agrupa os "vistos" por autor (um pacote a cada ~1,5 s)
+      const onReadsBatch = (payload) => {
+        (payload?.reads || []).forEach((entry) => onReads(entry));
+      };
+      s.on("messages:read:batch", onReadsBatch);
       s.on("message:deleted", onDeleted);
       unsub = () => {
         setMenuFor(null);
@@ -2290,8 +2339,8 @@ export default function Chat() {
         s.off("message:updated", onUpdated);
         s.off("message.reaction.updated", onReactionUpdated);
         s.off("messages:read", onReads);
+        s.off("messages:read:batch", onReadsBatch);
         s.off("message:deleted", onDeleted);
-        s.emit("group:leave", currentId);
       };
     })();
     return () => unsub();
@@ -4240,9 +4289,10 @@ export default function Chat() {
                       {mine &&
                         (() => {
                           // Determine status and tooltip
-                          const readers = (m.reads || []).map((r) => r.userId);
+                          const readers = m.readerIds || [];
+                          const readCount = m.readCount || 0;
                           if (otherUserId) {
-                            const isRead = readers.includes(otherUserId);
+                            const isRead = readCount > 0 || readers.includes(otherUserId);
                             const title = isRead ? "Visualizada" : "Entregue";
                             return <StatusTicks read={isRead} title={title} />;
                           }
@@ -4250,7 +4300,7 @@ export default function Chat() {
                           const readerIds = readers.filter(
                             (uid) => uid && uid !== user?.id
                           );
-                          if (readerIds.length === 0)
+                          if (readCount === 0 && readerIds.length === 0)
                             return (
                               <StatusTicks read={false} title="Entregue" />
                             );
@@ -4261,9 +4311,10 @@ export default function Chat() {
                                   ?.name || ""
                             )
                             .filter(Boolean);
+                          const extra = Math.max(0, readCount - names.length);
                           const title = names.length
-                            ? names.join(", ")
-                            : `Visto por ${readerIds.length}`;
+                            ? `Visto por ${names.join(", ")}${extra ? ` e mais ${extra}` : ""}`
+                            : `Visto por ${readCount || readerIds.length}`;
                           return <StatusTicks read={true} title={title} />;
                         })()}
                       <button

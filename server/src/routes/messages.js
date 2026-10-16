@@ -4,6 +4,15 @@ import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { authRequired } from '../middleware/auth.js'
 import { sendToUsers } from '../lib/push.js'
+import { markConversationRead, readInfoFor } from '../lib/conversations.js'
+import { queueReadNotifications } from '../lib/readNotifier.js'
+
+// Quem envia já "leu" a conversa até a própria mensagem
+function markAuthorRead(groupId, userId, at) {
+  return prisma.groupMember
+    .updateMany({ where: { groupId, userId }, data: { lastReadAt: at } })
+    .catch(() => {})
+}
 
 const router = express.Router()
 router.use(authRequired)
@@ -146,11 +155,15 @@ router.get('/:groupId', async (req, res) => {
         }
       },
       _count: { select: { replies: true } },
-      reads: { select: { userId: true } },
       reactions: { select: { emoji: true, userId: true } }
     }
   })
-  res.json(messages.map((m) => attachReactionSummary(m, req.user.id)))
+  // "Vistos" calculados pelo "lido até" de cada membro (não traz a lista de leitores de cada mensagem)
+  const readInfo = await readInfoFor(groupId, req.user.id, messages)
+  res.json(messages.map((m) => ({
+    ...attachReactionSummary(m, req.user.id),
+    ...(readInfo.get(m.id) || {})
+  })))
 })
 
 // Enviar mensagem (texto ou URL)
@@ -196,7 +209,8 @@ router.post('/:groupId', async (req, res) => {
       })
       return full || created
     })
-    const normalizedMsg = attachReactionSummary(msg, req.user.id)
+    const normalizedMsg = { ...attachReactionSummary(msg, req.user.id), readCount: 0, readerIds: [] }
+    void markAuthorRead(groupId, req.user.id, msg.createdAt)
     req.io.to(groupId).emit('message:new', normalizedMsg)
     const pushNotifications = async () => {
       try {
@@ -275,7 +289,8 @@ router.post('/:groupId/upload', requireMember, upload, async (req, res) => {
     })
     return full || created
   })
-  const normalizedMsg = attachReactionSummary(msg, req.user.id)
+  const normalizedMsg = { ...attachReactionSummary(msg, req.user.id), readCount: 0, readerIds: [] }
+  void markAuthorRead(groupId, req.user.id, msg.createdAt)
   req.io.to(groupId).emit('message:new', normalizedMsg)
   const pushNotifications = async () => {
     try {
@@ -301,19 +316,12 @@ router.post('/:groupId/read', async (req, res) => {
   const { groupId } = req.params
   const me = req.user.id
   // valida membro
-  const member = await prisma.groupMember.findFirst({ where: { groupId, userId: me } })
-  if (!member) return res.status(403).json({ error: 'Sem acesso ao grupo' })
-  const unread = await prisma.message.findMany({
-    where: { groupId, deletedAt: null, authorId: { not: me }, reads: { none: { userId: me } } },
-    select: { id: true }
-  })
-  if (unread.length === 0) return res.json({ ok: true, marked: 0 })
-  await prisma.messageRead.createMany({
-    data: unread.map(u => ({ messageId: u.id, userId: me })),
-    skipDuplicates: true
-  })
-  try { req.io.to(groupId).emit('messages:read', { groupId, userId: me, ids: unread.map(u => u.id) }) } catch {}
-  res.json({ ok: true, marked: unread.length })
+  const newlyRead = await markConversationRead(groupId, me)
+  if (newlyRead === null) return res.status(403).json({ error: 'Sem acesso ao grupo' })
+  // Avisa só os autores das mensagens lidas (são eles que veem os "vistos"), em lotes.
+  // Antes o aviso ia para o grupo inteiro: com 100 pessoas, 1 mensagem gerava ~10 mil eventos.
+  if (newlyRead.length) queueReadNotifications(req.io, groupId, me, newlyRead)
+  res.json({ ok: true, marked: newlyRead.length })
 })
 // Editar mensagem (somente texto) pelo autor ou admin
 router.patch('/:messageId', async (req, res) => {
