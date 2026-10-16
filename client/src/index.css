@@ -162,3 +162,19 @@ body.dark .chat-right-panel,
   transform: none !important;
   transition: none !important;
 }
+
+/* Barra de rolagem discreta (painel de emojis) */
+.emoji-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border) transparent;
+}
+.emoji-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.emoji-scroll::-webkit-scrollbar-thumb {
+  background: var(--ui-border);
+  border-radius: 9999px;
+}
+.emoji-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

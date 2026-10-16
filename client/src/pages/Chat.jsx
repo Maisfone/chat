@@ -350,37 +350,19 @@ export default function Chat() {
   const composerRef = useRef(null);
   function openEmojiPopover() {
     try {
-      const btn = emojiBtnRef.current;
-      const formEl = composerRef.current;
       const vw = typeof window !== "undefined" ? window.innerWidth : 800;
       const vh = typeof window !== "undefined" ? window.innerHeight : 600;
-      const pad = 4;
-      const lift = 4; // distância extra acima do form (4px)
-      const popMax = Math.min(26 * 16, vh - pad * 2);
-      const getRect = (el) =>
-        el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-      const rForm = getRect(formEl);
-      const rBtn = getRect(btn);
-      const source = rForm || rBtn;
-      if (source) {
-        const baseWidth = rForm
-          ? Math.min(420, Math.max(320, rForm.width || 420))
-          : Math.min(420, Math.max(320, vw * 0.95));
-        const desiredWidth = Math.min(baseWidth, vw - pad * 2);
-        const anchorLeft = rForm ? rForm.left : rBtn ? rBtn.left : pad;
-        const left = pad;
-        const anchorTop = rForm ? rForm.top : rBtn ? rBtn.top : vh / 2;
-        // bottom = distância da borda inferior do viewport até o topo do form + lift
-        const bottom = Math.max(pad, vh - anchorTop + lift);
-        setEmojiPos({ left, bottom, width: desiredWidth, maxHeight: popMax });
-      } else {
-        setEmojiPos({
-          left: pad,
-          bottom: 120,
-          width: Math.min(420, Math.max(320, vw * 0.95)),
-          maxHeight: popMax,
-        });
-      }
+      const pad = 8;
+      const width = Math.min(380, vw - pad * 2);
+      const rBtn = emojiBtnRef.current?.getBoundingClientRect?.();
+      const rForm = composerRef.current?.getBoundingClientRect?.();
+      // Antes ficava fixo no canto esquerdo (left = 4px), longe do botão
+      const anchorRight = rBtn ? rBtn.right : vw - pad;
+      const left = Math.min(Math.max(pad, anchorRight - width), vw - width - pad);
+      const anchorTop = rForm ? rForm.top : rBtn ? rBtn.top : vh / 2;
+      const bottom = Math.max(pad, vh - anchorTop + 6);
+      const maxHeight = Math.max(220, Math.min(420, anchorTop - pad * 2));
+      setEmojiPos({ left, bottom, width, maxHeight });
     } catch {}
     setShowEmoji(true);
   }
@@ -3120,6 +3102,7 @@ export default function Chat() {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    el.style.overflowY = el.scrollHeight > 160 ? "auto" : "hidden";
   }, [text]);
 
   const activeAvatar = useMemo(() => {
@@ -4858,7 +4841,7 @@ export default function Chat() {
                 }}
                 placeholder="Digite sua mensagem... (Enter envia, Shift+Enter quebra linha)"
                 rows={1}
-                className="block max-h-40 min-h-[38px] w-full resize-none bg-transparent py-2.5 pl-4 pr-2 text-sm text-ui-text placeholder:text-ui-muted focus:outline-none"
+                className="block max-h-40 min-h-[38px] w-full resize-none overflow-y-hidden bg-transparent py-2.5 pl-4 pr-2 text-sm text-ui-text placeholder:text-ui-muted focus:outline-none"
               />
               <div className="flex shrink-0 items-center gap-0.5 py-1 pr-1.5">
                 {recording && (
@@ -4932,34 +4915,39 @@ export default function Chat() {
           {showEmoji && (
             <div
               ref={emojiPopoverRef}
-              className="fixed mb-2 bg-white border border-slate-200 rounded-md p-2 shadow z-50 overflow-y-auto overflow-x-hidden"
+              className="fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-ui-border bg-ui-list p-2 shadow-2xl shadow-slate-900/15 dark:shadow-black/50"
               style={{
-                left: Math.max(4, emojiPos.left),
-                bottom: Math.max(4, emojiPos.bottom || 0),
-                width: `${emojiPos.width || 360}px`,
-                maxHeight: `${emojiPos.maxHeight || 416}px`,
+                left: Math.max(8, emojiPos.left),
+                bottom: Math.max(8, emojiPos.bottom || 0),
+                width: `${emojiPos.width || 380}px`,
+                maxHeight: `${emojiPos.maxHeight || 420}px`,
               }}
+              role="dialog"
+              aria-label="Emojis"
             >
-              <button
-                type="button"
-                className="absolute top-2 right-2 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700/60"
-                aria-label="Fechar"
-                onClick={() => setShowEmoji(false)}
-                title="Fechar"
-              >
-                <IconX className="w-4 h-4" />
-              </button>
+              <div className="flex items-center justify-between px-1.5 pb-1.5">
+                <span className="text-xs font-semibold text-ui-text">Emojis</span>
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-ui-muted hover:bg-ui-hover hover:text-ui-text"
+                  aria-label="Fechar"
+                  onClick={() => setShowEmoji(false)}
+                  title="Fechar"
+                >
+                  <IconX className="w-4 h-4" />
+                </button>
+              </div>
               {/* Campo de busca removido: navegação somente por rolagem */}
               {/* Atalhos removidos: navegação apenas por rolagem */}
               {false && (
                 <>
                   <div
                     ref={setEmojiSectionRef("recent")}
-                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                    className="sticky top-0 z-10 bg-ui-list py-1 text-[11px] font-medium text-ui-muted"
                   >
                     Recentes
                   </div>
-                  <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
+                  <div className="grid grid-cols-8 gap-1 mb-1">
                     {recentEmojis.map((e) => (
                       <button
                         key={`r-${e}`}
@@ -4969,7 +4957,7 @@ export default function Chat() {
                           ev.preventDefault();
                           toggleFavEmoji(e);
                         }}
-                        className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
+                        className={`relative inline-flex h-10 w-full items-center justify-center rounded-lg text-2xl leading-none transition-colors hover:bg-ui-hover ${
                           (favoriteEmojis || []).includes(e)
                             ? "bg-yellow-50"
                             : ""
@@ -4990,11 +4978,11 @@ export default function Chat() {
                 <>
                   <div
                     ref={setEmojiSectionRef("favoritos")}
-                    className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1"
+                    className="sticky top-0 z-10 bg-ui-list py-1 text-[11px] font-medium text-ui-muted"
                   >
                     Favoritos
                   </div>
-                  <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2">
+                  <div className="grid grid-cols-8 gap-1 mb-1">
                     {(favoriteEmojis || []).map((e) => (
                       <button
                         key={`f-${e}`}
@@ -5004,7 +4992,7 @@ export default function Chat() {
                           ev.preventDefault();
                           toggleFavEmoji(e);
                         }}
-                        className="relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 bg-yellow-50"
+                        className="relative inline-flex h-10 w-full items-center justify-center rounded-lg text-2xl leading-none transition-colors hover:bg-ui-hover bg-yellow-50"
                       >
                         <span className="absolute -top-0.5 -left-0.5 text-[10px] text-yellow-600">
                           ★
@@ -5016,7 +5004,7 @@ export default function Chat() {
                 </>
               )}
               {false ? (
-                <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1">
+                <div className="grid grid-cols-8 gap-1">
                   {EMOJIS.filter((e) => e.includes(emojiQuery.trim())).map(
                     (e) => (
                       <button
@@ -5027,7 +5015,7 @@ export default function Chat() {
                           ev.preventDefault();
                           toggleFavEmoji(e);
                         }}
-                        className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
+                        className={`relative inline-flex h-10 w-full items-center justify-center rounded-lg text-2xl leading-none transition-colors hover:bg-ui-hover ${
                           (favoriteEmojis || []).includes(e)
                             ? "bg-yellow-50"
                             : ""
@@ -5046,7 +5034,7 @@ export default function Chat() {
               ) : (
                 <div
                   ref={emojiScrollRef}
-                  className="relative max-h-80 overflow-y-auto overflow-x-hidden pr-1"
+                  className="emoji-scroll relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1"
                 >
                   {emojiOrder
                     .filter((k) => k !== "recent" || recentEmojis.length > 0)
@@ -5063,7 +5051,7 @@ export default function Chat() {
                       <div key={`sec-${key}`}>
                         <div
                           ref={setEmojiSectionRef(key)}
-                          className="sticky top-0 bg-white text-[11px] text-slate-500 mb-1 mt-1"
+                          className="sticky top-0 z-10 bg-ui-list py-1 text-[11px] font-medium text-ui-muted"
                         >
                           {key === "recent"
                             ? "Recentes"
@@ -5083,7 +5071,7 @@ export default function Chat() {
                           return rows.map((row, rowIndex) => (
                             <div
                               key={`row-${key}-${rowIndex}`}
-                              className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1 mb-2"
+                              className="grid grid-cols-8 gap-1 mb-1"
                             >
                               {row.map((e) => (
                                 <button
@@ -5094,9 +5082,9 @@ export default function Chat() {
                                     ev.preventDefault()
                                     toggleFavEmoji(e)
                                   }}
-                                  className={`relative inline-flex items-center justify-center w-8 h-8 md:w-9 md:h-9 text-2xl leading-none hover:bg-slate-100 dark:hover:bg-slate-700/60 rounded px-1.5 ${
+                                  className={`relative inline-flex h-10 w-full items-center justify-center rounded-lg text-2xl leading-none transition-colors hover:bg-ui-hover ${
                                     (favoriteEmojis || []).includes(e)
-                                      ? "bg-yellow-50"
+                                      ? "bg-amber-500/10"
                                       : ""
                                   }`}
                                 >
@@ -5116,7 +5104,7 @@ export default function Chat() {
                 </div>
               )}
               {emojiTab === "recent" && recentEmojis.length === 0 && (
-                <div className="text-xs text-slate-500 mt-2">
+                <div className="mt-2 px-1.5 text-xs text-ui-muted">
                   Sem recentes ainda
                 </div>
               )}
