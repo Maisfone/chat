@@ -272,14 +272,15 @@ export default function Chat() {
     });
   }
   const [menuFor, setMenuFor] = useState(null);
+  // Abre o menu da mensagem para cima quando não há espaço embaixo (ex.: última mensagem)
+  const [menuUp, setMenuUp] = useState(false);
   const manualUnreadMarker = active?.id ? manualUnread?.[active.id] : null;
   const messageMenuContainerRef = useRef(null);
   const isChatDark = useDarkTheme();
-  const messageMenuPanelClass = isChatDark
-    ? "bg-white/95 border-slate-200 text-slate-900 shadow-lg"
-    : "bg-white border-slate-200 text-slate-900";
-  const messageMenuButtonClass = "text-slate-700 hover:bg-slate-50";
-  const messageMenuIconClass = "text-slate-500";
+  const messageMenuPanelClass =
+    "min-w-[180px] rounded-xl border-ui-border bg-ui-list p-1 text-ui-text shadow-xl shadow-slate-900/15 dark:shadow-black/50";
+  const messageMenuButtonClass = "rounded-lg text-ui-text hover:bg-ui-hover";
+  const messageMenuIconClass = "text-ui-muted";
   const sideMenuPanelClass = isChatDark
     ? "bg-slate-950 border-slate-800 text-slate-100"
     : "bg-white border-slate-200 text-slate-900";
@@ -4321,18 +4322,40 @@ export default function Chat() {
                   >
                     <button
                       type="button"
-                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-slate-700"
-                      onClick={() => {
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-ui-muted transition hover:bg-ui-hover hover:text-ui-text ${
+                        menuFor === m.id ? "bg-ui-hover opacity-100" : "opacity-0 group-hover:opacity-100"
+                      }`}
+                      onClick={(e) => {
                         setReactionPickerFor(null);
-                        setMenuFor(menuFor === m.id ? null : m.id);
+                        if (menuFor === m.id) {
+                          setMenuFor(null);
+                          return;
+                        }
+                        try {
+                          const btn = e.currentTarget.getBoundingClientRect();
+                          const box = listRef.current?.getBoundingClientRect();
+                          const bottomLimit = box ? box.bottom : window.innerHeight;
+                          const topLimit = box ? box.top : 0;
+                          const spaceBelow = bottomLimit - btn.bottom;
+                          const spaceAbove = btn.top - topLimit;
+                          setMenuUp(spaceBelow < 250 && spaceAbove > spaceBelow);
+                        } catch {
+                          setMenuUp(false);
+                        }
+                        setMenuFor(m.id);
                       }}
                       aria-label="Ações"
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === m.id}
                     >
-                      ...
+                      <IconEllipsis className="h-4 w-4" />
                     </button>
                     {menuFor === m.id && (
                       <div
-                        className={`absolute right-0 mt-1 rounded shadow text-sm z-10 border ${messageMenuPanelClass}`}
+                        className={`absolute right-0 z-20 text-sm border ${
+                          menuUp ? "bottom-full mb-1" : "top-full mt-1"
+                        } ${messageMenuPanelClass}`}
+                        role="menu"
                       >
                         <button
                           className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
@@ -4424,11 +4447,7 @@ export default function Chat() {
                         )}
                         {(m.author?.id || m.authorId) === user?.id && (
                           <button
-                          className={`flex items-center gap-2 w-full text-left px-3 py-1.5 transition-colors ${
-                            isChatDark
-                              ? "text-red-400 hover:bg-red-900/40"
-                              : "text-red-600 hover:bg-red-50"
-                          }`}
+                          className="flex items-center gap-2 w-full rounded-lg text-left px-3 py-1.5 transition-colors text-red-600 hover:bg-red-500/10 dark:text-red-400"
                             onClick={() => {
                               setMenuFor(null);
                               deleteMessage(m);
@@ -4454,7 +4473,7 @@ export default function Chat() {
                         )}
                         {m._count?.replies > 0 && (
                           <button
-                            className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
+                            className={`block w-full text-left px-3 py-1.5 transition-colors ${messageMenuButtonClass}`}
                             onClick={() => {
                               setMenuFor(null);
                               goToFirstReply(m);
