@@ -24,7 +24,7 @@ import { verifyToken } from "./middleware/auth.js";
 import { prisma } from "./prisma.js";
 
 // JWT_SECRET é obrigatório e precisa ser forte: quem conhece o segredo consegue gerar token de admin
-const WEAK_SECRETS = new Set(["dev-super-secret-change-me", "dev-local-secret-change-me", "270424@Mel"]);
+const WEAK_SECRETS = new Set(["dev-super-secret-change-me", "dev-local-secret-change-me"]);
 const jwtSecret = process.env.JWT_SECRET || "";
 if (!jwtSecret || WEAK_SECRETS.has(jwtSecret) || jwtSecret.length < 32) {
   const msg = "JWT_SECRET ausente ou fraco. Gere um com: openssl rand -hex 32";
