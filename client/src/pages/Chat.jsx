@@ -103,6 +103,7 @@ const IMAGE_PREVIEW_STEP = 0.25;
 const clampImageZoom = (value) =>
   Math.min(IMAGE_PREVIEW_MAX_ZOOM, Math.max(IMAGE_PREVIEW_MIN_ZOOM, value));
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const REACTION_LABELS = { "👍": "Curtir", "❤️": "Amei", "😂": "Haha", "😮": "Uau", "😢": "Triste", "🙏": "Obrigado" };
 
 function sortReactionSummaryList(items = []) {
   return [...items].sort((a, b) => {
@@ -274,6 +275,7 @@ export default function Chat() {
   const [menuFor, setMenuFor] = useState(null);
   // Abre o menu da mensagem para cima quando não há espaço embaixo (ex.: última mensagem)
   const [menuUp, setMenuUp] = useState(false);
+  const [reactionDown, setReactionDown] = useState(false);
   const manualUnreadMarker = active?.id ? manualUnread?.[active.id] : null;
   const messageMenuContainerRef = useRef(null);
   const isChatDark = useDarkTheme();
@@ -4052,55 +4054,71 @@ export default function Chat() {
               const myReactionEmoji = (
                 m.reactionSummary || []
               ).find((entry) => entry.reactedByMe)?.emoji;
-              const reactionButtonLabel = myReactionEmoji || "🙂";
-              const reactionButtonActive = Boolean(myReactionEmoji);
-              const popoverPlacementClass = mine
-                ? "right-full -mr-2"
-                : "left-full ml-2";
-              const reactionButtonVisible =
-                reactionButtonActive || reactionPickerFor === m.id;
+              const reactionPickerOpen = reactionPickerFor === m.id;
               const reactionButtonElement = (
                 <div className="relative flex items-center">
                   <button
                     type="button"
                     data-reaction-button={m.id}
-                    onClick={() =>
-                      setReactionPickerFor((prev) =>
-                        prev === m.id ? null : m.id
-                      )
-                    }
-                    title={
-                      reactionButtonActive
-                        ? "Alterar reação"
-                        : "Reagir com emoji"
-                    }
-                    className={`h-7 w-7 flex items-center justify-center rounded-full shadow transition duration-150 text-base ${
-                      reactionButtonActive
-                        ? "text-blue-600"
-                        : "text-slate-600"
-                    } ${
-                      reactionButtonVisible
-                        ? "opacity-100 pointer-events-auto"
-                        : "opacity-0 pointer-events-none"
-                    } group-hover:opacity-100 group-hover:pointer-events-auto`}
+                    onClick={(e) => {
+                      if (reactionPickerOpen) {
+                        setReactionPickerFor(null);
+                        return;
+                      }
+                      try {
+                        const btn = e.currentTarget.getBoundingClientRect();
+                        const box = listRef.current?.getBoundingClientRect();
+                        setReactionDown(btn.top - (box ? box.top : 0) < 64);
+                      } catch {
+                        setReactionDown(false);
+                      }
+                      setMenuFor(null);
+                      setReactionPickerFor(m.id);
+                    }}
+                    title={myReactionEmoji ? "Alterar reação" : "Reagir"}
+                    aria-label={myReactionEmoji ? "Alterar reação" : "Reagir"}
+                    aria-expanded={reactionPickerOpen}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-ui-border bg-ui-list text-ui-muted shadow-sm transition hover:text-ui-text hover:scale-110 ${
+                      reactionPickerOpen ? "opacity-100 text-ui-primary" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                    }`}
                   >
-                    {reactionButtonLabel}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                      <path d="M20.5 12a8.5 8.5 0 1 1-6-8.13" />
+                      <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
+                      <path d="M9 9.5h.01M15 9.5h.01" strokeWidth="2.4" />
+                      <path d="M19 2.5v5M16.5 5h5" />
+                    </svg>
                   </button>
-                  {reactionPickerFor === m.id && (
-                  <div
-                    ref={reactionPopoverRef}
-                    className={`absolute -top-12 z-20 flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900 ${popoverPlacementClass}`}
-                  >
-                      {QUICK_REACTIONS.map((emoji) => (
-                        <button
-                          type="button"
-                          key={emoji}
-                          onClick={() => handleReactionSelect(m, emoji)}
-                          className="rounded-full px-2 py-1 text-base leading-none transition hover:bg-slate-100 dark:hover:bg-slate-800"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
+                  {reactionPickerOpen && (
+                    <div
+                      ref={reactionPopoverRef}
+                      role="menu"
+                      aria-label="Escolha uma reação"
+                      className={`reaction-pop absolute z-30 flex items-center gap-0.5 rounded-full border border-ui-border bg-ui-list p-1 shadow-xl shadow-slate-900/15 dark:shadow-black/50 ${
+                        reactionDown ? "top-full mt-2" : "bottom-full mb-2"
+                      } ${mine ? "right-0 origin-bottom-right" : "left-0 origin-bottom-left"}`}
+                    >
+                      {QUICK_REACTIONS.map((emoji) => {
+                        const selected = myReactionEmoji === emoji;
+                        return (
+                          <button
+                            type="button"
+                            key={emoji}
+                            role="menuitem"
+                            title={selected ? `${REACTION_LABELS[emoji]} (remover)` : REACTION_LABELS[emoji]}
+                            aria-label={REACTION_LABELS[emoji]}
+                            onClick={() => {
+                              handleReactionSelect(m, emoji);
+                              setReactionPickerFor(null);
+                            }}
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-[22px] leading-none transition-transform duration-150 hover:-translate-y-0.5 hover:scale-125 ${
+                              selected ? "bg-ui-selected ring-1 ring-ui-primary/40" : "hover:bg-ui-hover"
+                            }`}
+                          >
+                            {emoji}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -4314,6 +4332,30 @@ export default function Chat() {
                         <IconStar className="w-4 h-4" filled={isFav(m.id)} />
                       </button>
                     </div>
+                    {(m.reactionSummary || []).length > 0 && (
+                      <div className={`mt-1.5 flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}>
+                        {(m.reactionSummary || []).map((r) => (
+                          <button
+                            type="button"
+                            key={r.emoji}
+                            onClick={() => handleReactionSelect(m, r.emoji)}
+                            title={r.reactedByMe ? "Remover sua reação" : `Reagir com ${REACTION_LABELS[r.emoji] || r.emoji}`}
+                            className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs leading-none transition-colors ${
+                              mine
+                                ? r.reactedByMe
+                                  ? "bg-white/30 text-white ring-1 ring-white/60"
+                                  : "bg-white/15 text-white hover:bg-white/25"
+                                : r.reactedByMe
+                                ? "bg-ui-selected text-ui-text ring-1 ring-ui-primary/40"
+                                : "bg-ui-hover text-ui-text hover:ring-1 hover:ring-ui-border"
+                            }`}
+                          >
+                            <span className="text-sm">{r.emoji}</span>
+                            {r.count > 1 && <span className="font-semibold tabular-nums">{r.count}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {!mine && reactionButtonElement}
                   <div
