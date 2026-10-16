@@ -1,4 +1,5 @@
 import React, {
+  useLayoutEffect,
   useCallback,
   useEffect,
   useMemo,
@@ -97,11 +98,6 @@ function renderFormattedText(text) {
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_CONVERSATION_CACHE = 20;
 const MAX_MESSAGES_CACHE = 500;
-const IMAGE_PREVIEW_MIN_ZOOM = 0.5;
-const IMAGE_PREVIEW_MAX_ZOOM = 3;
-const IMAGE_PREVIEW_STEP = 0.25;
-const clampImageZoom = (value) =>
-  Math.min(IMAGE_PREVIEW_MAX_ZOOM, Math.max(IMAGE_PREVIEW_MIN_ZOOM, value));
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const REACTION_LABELS = { "👍": "Curtir", "❤️": "Amei", "😂": "Haha", "😮": "Uau", "😢": "Triste", "🙏": "Obrigado" };
 
@@ -647,30 +643,12 @@ export default function Chat() {
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const attachmentsRef = useRef([]);
   const [imagePreview, setImagePreview] = useState(null);
-  const [imageZoom, setImageZoom] = useState(1);
-  const updateImageZoom = useCallback((delta) => {
-    setImageZoom((prev) => clampImageZoom(prev + delta));
-  }, []);
   const closeImagePreview = useCallback(() => {
     setImagePreview(null);
-    setImageZoom(1);
   }, []);
-  const openImagePreview = useCallback(
-    (payload) => {
-      setImagePreview(payload);
-      setImageZoom(1);
-    },
-    []
-  );
-  const handleImageWheel = useCallback(
-    (event) => {
-      if (!imagePreview) return;
-      event.preventDefault();
-      const delta = event.deltaY < 0 ? IMAGE_PREVIEW_STEP : -IMAGE_PREVIEW_STEP;
-      updateImageZoom(delta);
-    },
-    [imagePreview, updateImageZoom]
-  );
+  const openImagePreview = useCallback((payload) => {
+    setImagePreview(payload);
+  }, []);
 
   // Conversation menu (header)
   const [convMenuOpen, setConvMenuOpen] = useState(false);
@@ -3352,79 +3330,11 @@ export default function Chat() {
     </div>
       )}
       {imagePreview && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
-          onClick={closeImagePreview}
-        >
-          <div
-            className="relative max-h-[90vh] max-w-[92vw] rounded-lg bg-white p-2 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={closeImagePreview}
-              className="absolute right-2 top-2 rounded-full bg-white/90 p-1 text-slate-700 shadow hover:bg-white"
-              aria-label="Fechar imagem"
-            >
-              <IconX />
-            </button>
-            <div
-              className="max-h-[86vh] max-w-[88vw] overflow-auto flex items-center justify-center"
-              onWheel={handleImageWheel}
-            >
-              <img
-                src={imagePreview.url}
-                alt={imagePreview.name || "imagem"}
-                className="rounded object-contain bg-slate-100"
-                style={{
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  width: "auto",
-                  height: "auto",
-                  transform: `scale(${imageZoom})`,
-                  transformOrigin: "center",
-                }}
-              />
-            </div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>
-                Zoom {Math.round(imageZoom * 100)}%
-                <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
-                  (Roda do mouse)
-                </span>
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => updateImageZoom(-IMAGE_PREVIEW_STEP)}
-                  disabled={imageZoom <= IMAGE_PREVIEW_MIN_ZOOM}
-                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
-                  aria-label="Diminuir zoom"
-                >
-                  -
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setImageZoom(1)}
-                  disabled={imageZoom === 1}
-                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
-                  aria-label="Resetar zoom"
-                >
-                  100%
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateImageZoom(IMAGE_PREVIEW_STEP)}
-                  disabled={imageZoom >= IMAGE_PREVIEW_MAX_ZOOM}
-                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 text-[11px]"
-                  aria-label="Aumentar zoom"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ImageViewer
+          url={imagePreview.url}
+          name={imagePreview.name}
+          onClose={closeImagePreview}
+        />
       )}
       {!isDesktop && showLeftPane && (
         <button
@@ -5939,6 +5849,207 @@ function formatDayAndTime(ts) {
   if (diff === 0) return `hoje, ${time}`;
   if (diff === 1) return `ontem, ${time}`;
   return `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}, ${time}`;
+}
+
+// Visualizador de imagem em tela cheia: zoom real (a imagem aumenta de tamanho, não só
+// "estica"), zoom na direção do mouse, arrastar para mover, duplo clique e atalhos.
+const VIEWER_MAX_ZOOM = 8;
+function ImageViewer({ url, name, onClose }) {
+  const areaRef = useRef(null);
+  const [natural, setNatural] = useState(null);
+  const [area, setArea] = useState({ w: 0, h: 0 });
+  const [zoom, setZoom] = useState(1); // 1 = ajustada à tela
+  const anchorRef = useRef(null);
+  const dragRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return undefined;
+    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  // Escala para caber na tela (sem aumentar imagens pequenas)
+  const fit = natural && area.w
+    ? Math.min(1, (area.w - 64) / natural.w, (area.h - 64) / natural.h)
+    : 1;
+  const scale = fit * zoom;
+  const width = natural ? Math.max(1, Math.round(natural.w * scale)) : undefined;
+  const height = natural ? Math.max(1, Math.round(natural.h * scale)) : undefined;
+  // Só dá para arrastar quando a imagem passa do tamanho da área
+  const canPan = !!natural && (width > area.w - 64 || height > area.h - 64);
+  const maxZoom = natural ? Math.max(VIEWER_MAX_ZOOM, 4 / Math.max(fit, 0.01)) : VIEWER_MAX_ZOOM;
+
+  // Muda o zoom mantendo fixo o ponto sob o mouse (ou o centro)
+  const changeZoom = useCallback(
+    (next, clientX, clientY) => {
+      const el = areaRef.current;
+      setZoom((prev) => {
+        const target = Math.min(maxZoom, Math.max(1, next(prev)));
+        if (el && target !== prev) {
+          const rect = el.getBoundingClientRect();
+          const px = (clientX ?? rect.left + rect.width / 2) - rect.left;
+          const py = (clientY ?? rect.top + rect.height / 2) - rect.top;
+          anchorRef.current = {
+            px,
+            py,
+            x: (el.scrollLeft + px) / prev,
+            y: (el.scrollTop + py) / prev,
+            zoom: target,
+          };
+        }
+        return target;
+      });
+    },
+    [maxZoom]
+  );
+
+  useLayoutEffect(() => {
+    const el = areaRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !anchor || anchor.zoom !== zoom) return;
+    el.scrollLeft = anchor.x * zoom - anchor.px;
+    el.scrollTop = anchor.y * zoom - anchor.py;
+    anchorRef.current = null;
+  }, [zoom]);
+
+  // Roda do mouse (listener não passivo para poder impedir a rolagem da página)
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+      changeZoom((z) => z * factor, e.clientX, e.clientY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [changeZoom]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "+" || e.key === "=") changeZoom((z) => z * 1.25);
+      else if (e.key === "-") changeZoom((z) => z / 1.25);
+      else if (e.key === "0") setZoom(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, changeZoom]);
+
+  const onPointerDown = (e) => {
+    if (!canPan || e.button !== 0) return;
+    const el = areaRef.current;
+    dragRef.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false };
+    setDragging(true);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const el = areaRef.current;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
+    el.scrollLeft = d.left - dx;
+    el.scrollTop = d.top - dy;
+  };
+  const onPointerUp = () => {
+    setTimeout(() => {
+      dragRef.current = null;
+    }, 0);
+    setDragging(false);
+  };
+
+  async function download() {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = name || "imagem";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+    } catch {
+      window.open(url, "_blank", "noopener");
+    }
+  }
+
+  const btn = "inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-sm font-medium text-white/85 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+  const percent = Math.round(scale * 100);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col bg-slate-950/90 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Visualizar imagem">
+      <div className="flex items-center gap-3 px-4 py-3 text-white">
+        <div className="min-w-0 flex-1 truncate text-sm font-medium" title={name || ""}>
+          {name || "Imagem"}
+        </div>
+        <div className="flex items-center gap-0.5 rounded-xl bg-white/10 p-1">
+          <button type="button" className={btn} onClick={() => changeZoom((z) => z / 1.25)} disabled={zoom <= 1} title="Diminuir zoom (-)" aria-label="Diminuir zoom">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4"><path d="M5 12h14" /></svg>
+          </button>
+          <button type="button" className={`${btn} w-16 tabular-nums`} onClick={() => setZoom(1)} title="Ajustar à tela (0)">
+            {percent}%
+          </button>
+          <button type="button" className={btn} onClick={() => changeZoom((z) => z * 1.25)} disabled={zoom >= maxZoom} title="Aumentar zoom (+)" aria-label="Aumentar zoom">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <span className="mx-1 h-5 w-px bg-white/20" />
+          <button type="button" className={btn} onClick={() => setZoom(1)} disabled={zoom === 1} title="Ajustar à tela">
+            Ajustar
+          </button>
+          <button type="button" className={btn} onClick={() => natural && changeZoom(() => 1 / fit)} disabled={!natural || Math.abs(scale - 1) < 0.01} title="Tamanho real">
+            100%
+          </button>
+        </div>
+        <button type="button" className={btn} onClick={download} title="Baixar imagem" aria-label="Baixar imagem">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+        </button>
+        <button type="button" className={`${btn} bg-white/10`} onClick={onClose} title="Fechar (Esc)" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <div
+        ref={areaRef}
+        className={`viewer-area relative flex min-h-0 flex-1 overflow-auto ${canPan ? (dragging ? "cursor-grabbing" : "cursor-grab") : ""}`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onClick={(e) => {
+          // clicar fora da imagem fecha (sem contar o fim de um arraste)
+          if (e.target === e.currentTarget && !dragRef.current?.moved) onClose();
+        }}
+      >
+        <div className="m-auto p-8" onClick={(e) => { if (e.target === e.currentTarget && !dragRef.current?.moved) onClose(); }}>
+          {failed ? (
+            <div className="rounded-xl bg-white/10 px-6 py-4 text-sm text-white/80">Não foi possível carregar a imagem.</div>
+          ) : (
+            <img
+              src={url}
+              alt={name || "imagem"}
+              draggable={false}
+              onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+              onError={() => setFailed(true)}
+              onDoubleClick={(e) => changeZoom((z) => (z > 1 ? 1 : 2.5), e.clientX, e.clientY)}
+              style={{ width, height, maxWidth: "none", visibility: natural ? "visible" : "hidden" }}
+              className="block select-none rounded-md shadow-2xl"
+            />
+          )}
+        </div>
+      </div>
+      <div className="pb-3 text-center text-xs text-white/50">
+        Roda do mouse ou + / − para zoom · arraste para mover · duplo clique alterna o zoom · Esc fecha
+      </div>
+    </div>
+  );
 }
 
 // Citação da mensagem respondida. Variantes: dentro da minha bolha (azul), na bolha

@@ -193,3 +193,11 @@ body.dark .chat-right-panel,
     transform: scale(1) translateY(0);
   }
 }
+
+/* Visualizador de imagem: sem barras de rolagem (a imagem é movida arrastando) */
+.viewer-area {
+  scrollbar-width: none;
+}
+.viewer-area::-webkit-scrollbar {
+  display: none;
+}
