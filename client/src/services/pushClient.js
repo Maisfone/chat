@@ -1,6 +1,5 @@
 import { api } from './api.js';
 
-const PUBLIC_VAPID_KEY = 'BLX4iWgrhNgMUBR7yYLSu_LLHgE0ZbrFlrY9UBd3hGAfXc6SrOTcsVf2tdI1hJEzcXG3cg8NFIkNmvDXIK8sKm0';
 const messageListenerFlag = { attached: false };
 
 function urlBase64ToUint8Array(base64String) {
@@ -19,7 +18,19 @@ async function fetchPublicKey() {
     const { key } = await api.get('/push/vapid-public-key');
     if (key) return key;
   } catch {}
-  return PUBLIC_VAPID_KEY;
+  return null;
+}
+
+function sameKey(subscription, keyBytes) {
+  try {
+    const current = subscription?.options?.applicationServerKey;
+    if (!current) return true; // navegador não informa: mantém a assinatura
+    const a = new Uint8Array(current);
+    if (a.length !== keyBytes.length) return false;
+    return a.every((v, i) => v === keyBytes[i]);
+  } catch {
+    return true;
+  }
 }
 
 async function postSubscription(subscription) {
@@ -50,10 +61,16 @@ export async function ensurePushSubscription() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
   attachMessageListener();
   const registration = await navigator.serviceWorker.ready;
+  const publicKey = await fetchPublicKey();
+  if (!publicKey) return null;
+  const key = urlBase64ToUint8Array(publicKey);
   let subscription = await registration.pushManager.getSubscription();
+  // Se o servidor trocou a chave VAPID, a assinatura antiga não recebe mais nada: refaz
+  if (subscription && !sameKey(subscription, key)) {
+    try { await subscription.unsubscribe(); } catch {}
+    subscription = null;
+  }
   if (!subscription) {
-    const publicKey = await fetchPublicKey();
-    const key = urlBase64ToUint8Array(publicKey);
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: key,

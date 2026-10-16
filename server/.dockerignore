@@ -9,3 +9,6 @@ Dockerfile
 docker-compose*
 README.md
 tmp*
+data
+backups
+*.err

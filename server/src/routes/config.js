@@ -100,7 +100,7 @@ router.patch('/', adminRequired, (req, res) => {
 })
 
 // Admin: upload icon and persist URL
-const uploadIcon = handleUploadSingle('icon')
+const uploadIcon = handleUploadSingle('icon', { accept: 'image' })
 router.post('/icon', adminRequired, uploadIcon, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
@@ -113,7 +113,7 @@ router.post('/icon', adminRequired, uploadIcon, (req, res) => {
 })
 
 // Admin: upload wallpaper and persist URL
-const uploadWallpaper = handleUploadSingle('wallpaper')
+const uploadWallpaper = handleUploadSingle('wallpaper', { accept: 'image' })
 router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
@@ -125,7 +125,7 @@ router.post('/wallpaper', adminRequired, uploadWallpaper, (req, res) => {
 })
 
 // Admin: upload login logo and persist URL
-const uploadLoginLogo = handleUploadSingle('loginLogo')
+const uploadLoginLogo = handleUploadSingle('loginLogo', { accept: 'image' })
 router.post('/login-logo', adminRequired, uploadLoginLogo, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
@@ -160,7 +160,7 @@ function createAlertSoundId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-const uploadSound = handleUploadSingle('sound')
+const uploadSound = handleUploadSingle('sound', { accept: 'audio' })
 router.post('/alert-sounds', adminRequired, uploadSound, (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })

@@ -19,6 +19,9 @@ model User {
   address    String?  @map("address")
   isBlocked  Boolean  @default(false) @map("is_blocked")
   isAdmin    Boolean  @default(false) @map("is_admin")
+  passwordChangedAt    DateTime? @map("password_changed_at")
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -67,6 +70,8 @@ model GroupMember {
   userId    String   @map("user_id")
   role      String   @default("member")
   joinedAt  DateTime @default(now()) @map("joined_at")
+  // Até quando a pessoa leu esta conversa (substitui uma linha de MessageRead por mensagem)
+  lastReadAt DateTime? @map("last_read_at")
 
   @@unique([groupId, userId])
   @@index([userId])

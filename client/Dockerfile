@@ -1,10 +1,10 @@
 # build stage
-FROM node:18 AS build
+FROM node:22 AS build
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Permite configurar as variáveis do Vite em tempo de build
 ARG VITE_API_URL

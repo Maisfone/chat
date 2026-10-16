@@ -1,43 +1,35 @@
-﻿import express from 'express'
+import express from 'express'
 import { prisma } from '../prisma.js'
 import { z } from 'zod'
 import { adminRequired, authRequired } from '../middleware/auth.js'
 import { handleUploadSingle } from '../lib/storage.js'
+import { unreadCountsFor, unreadMentionCountsFor, lastMessagesFor } from '../lib/conversations.js'
 
 const router = express.Router()
 
 router.use(authRequired)
 
-// Listar grupos do usuÃ¡rio
+// Listar grupos do usuário (4 consultas no total, qualquer que seja o número de grupos)
 router.get('/', async (req, res) => {
   const me = req.user.id
   const groups = await prisma.group.findMany({
     where: { members: { some: { userId: me } }, directThread: { is: null } },
-    orderBy: { lastMessageAt: 'desc' }
+    orderBy: { lastMessageAt: 'desc' },
+    include: { _count: { select: { members: true } } }
   })
-  // Anexa contagem de nÃ£o lidas
-  const withUnread = await Promise.all(groups.map(async (g) => {
-    const unread = await prisma.message.count({
-      where: {
-        groupId: g.id,
-        deletedAt: null,
-        authorId: { not: me },
-        reads: { none: { userId: me } }
-      }
-    })
-    const mentions = await prisma.messageMention.count({
-      where: {
-        userId: me,
-        message: {
-          groupId: g.id,
-          deletedAt: null,
-          reads: { none: { userId: me } }
-        }
-      }
-    })
-    return { ...g, _unread: unread, _mentions: mentions }
-  }))
-  res.json(withUnread)
+  const groupIds = groups.map((g) => g.id)
+  const [unreadMap, mentionMap, lastMap] = await Promise.all([
+    unreadCountsFor(me, groupIds),
+    unreadMentionCountsFor(me, groupIds),
+    lastMessagesFor(groupIds)
+  ])
+  res.json(groups.map(({ _count, ...g }) => ({
+    ...g,
+    lastMessage: lastMap.get(g.id) || null,
+    _memberCount: _count?.members || 0,
+    _unread: unreadMap.get(g.id) || 0,
+    _mentions: mentionMap.get(g.id) || 0
+  })))
 })
 
 // Admin: listar todos os grupos
@@ -46,11 +38,15 @@ router.get('/all', adminRequired, async (req, res) => {
 
   const groups = await prisma.group.findMany({
     orderBy: { lastMessageAt: 'desc' },
-    include: { directThread: true }
+    include: { directThread: true, _count: { select: { members: true, messages: true } } }
   })
 
   const filtered = includeDMs ? groups : groups.filter((g) => !g.directThread)
-  res.json(filtered.map(({ directThread, ...g }) => g))
+  res.json(filtered.map(({ directThread, _count, ...g }) => ({
+    ...g,
+    memberCount: _count?.members || 0,
+    messageCount: _count?.messages || 0
+  })))
 })
 
 // Participantes de um grupo (visível aos membros)
@@ -76,7 +72,7 @@ router.post('/', adminRequired, async (req, res) => {
     const group = await prisma.group.create({ data: { name, isPrivate: !!isPrivate } })
     res.status(201).json(group)
   } catch (e) {
-    res.status(400).json({ error: 'Dados invÃ¡lidos' })
+    res.status(400).json({ error: 'Dados inválidos' })
   }
 })
 
@@ -87,9 +83,11 @@ router.post('/:groupId/members', adminRequired, async (req, res) => {
     const { userId, role } = schema.parse(req.body)
     const groupId = req.params.groupId
     const member = await prisma.groupMember.create({ data: { groupId, userId, role: role || 'member' } })
+    // Conexões abertas do usuário passam a receber o grupo em tempo real
+    try { req.io?.in(`user:${userId}`).socketsJoin(groupId) } catch {}
     res.status(201).json(member)
   } catch (e) {
-    res.status(400).json({ error: 'Dados invÃ¡lidos ou membro jÃ¡ existe' })
+    res.status(400).json({ error: 'Dados inválidos ou membro já existe' })
   }
 })
 
@@ -97,9 +95,11 @@ router.delete('/:groupId/members/:userId', adminRequired, async (req, res) => {
   const { groupId, userId } = req.params
   try {
     await prisma.groupMember.delete({ where: { groupId_userId: { groupId, userId } } })
+    // Removido do grupo deixa de receber as mensagens em tempo real
+    try { req.io?.in(`user:${userId}`).socketsLeave(groupId) } catch {}
     res.status(204).send()
   } catch {
-    res.status(404).json({ error: 'Membro nÃ£o encontrado' })
+    res.status(404).json({ error: 'Membro não encontrado' })
   }
 })
 
@@ -127,7 +127,7 @@ router.patch('/:groupId', adminRequired, async (req, res) => {
 })
 
 // Atualizar avatar do grupo (local ou S3)
-const upload = handleUploadSingle('avatar')
+const upload = handleUploadSingle('avatar', { accept: 'image' })
 router.patch('/:groupId/avatar', adminRequired, upload, async (req, res) => {
   try {
     if (!req.file?.url) return res.status(400).json({ error: 'Arquivo ausente' })
@@ -138,7 +138,7 @@ router.patch('/:groupId/avatar', adminRequired, upload, async (req, res) => {
   }
 })
 
-// Admin: excluir grupo e dependÃªncias
+// Admin: excluir grupo e dependências
 router.delete('/:groupId', adminRequired, async (req, res) => {
   const groupId = req.params.groupId
   try {
@@ -148,6 +148,9 @@ router.delete('/:groupId', adminRequired, async (req, res) => {
       if (ids.length) {
         await tx.messageMention.deleteMany({ where: { messageId: { in: ids } } })
         await tx.messageRead.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.messageFavorite.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.messageReaction.deleteMany({ where: { messageId: { in: ids } } })
+        await tx.message.updateMany({ where: { replyToId: { in: ids } }, data: { replyToId: null } })
         await tx.message.deleteMany({ where: { id: { in: ids } } })
       }
       await tx.groupMember.deleteMany({ where: { groupId } })

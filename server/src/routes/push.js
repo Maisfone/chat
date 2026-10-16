@@ -3,11 +3,13 @@ import { authRequired } from '../middleware/auth.js'
 import { getVapidPublicKey, saveSubscription, removeSubscription, sendToUser } from '../lib/push.js'
 
 const router = express.Router()
-router.use(authRequired)
 
+// Chave pública (não é segredo): usada também pelo service worker
 router.get('/vapid-public-key', (req, res) => {
   res.json({ key: getVapidPublicKey() })
 })
+
+router.use(authRequired)
 
 router.post('/subscribe', (req, res) => {
   try {

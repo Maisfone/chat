@@ -1,5 +1,77 @@
 @import "tailwindcss";
 
+/* Tailwind v4 ignora darkMode do tailwind.config: o tema escuro é controlado pela classe .dark */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Paleta do layout (claro / escuro) */
+:root {
+  --ui-sidebar: #f8fafd;
+  --ui-list: #fcfdfe;
+  --ui-chat: #f3f8fd;
+  --ui-header: #f8fafd;
+  --ui-composer: #f4f8fc;
+  --ui-input: #ffffff;
+  --ui-border: #e6ecf5;
+  --ui-hover: #f1f5fb;
+  --ui-selected: #eaf2fe;
+  --ui-nav-active: #e4eefe;
+  --ui-nav-active-text: #1d64fd;
+  --ui-text: #0f172a;
+  --ui-muted: #64748b;
+  --ui-icon: #7f93b5;
+  --ui-btn: #f2f6fb;
+  --ui-primary: #1d64fd;
+  --ui-primary-hover: #1553e0;
+  --ui-avatar-group-bg: #dbe7fe;
+  --ui-avatar-group-fg: #1d64fd;
+  --ui-bubble-other: #ffffff;
+  --ui-bubble-other-text: #0f172a;
+}
+.dark {
+  --ui-sidebar: #0c1626;
+  --ui-list: #081124;
+  --ui-chat: #0c1626;
+  --ui-header: #0d1727;
+  --ui-composer: #0e1a2c;
+  --ui-input: #152135;
+  --ui-border: #1b2638;
+  --ui-hover: #101c30;
+  --ui-selected: #152746;
+  --ui-nav-active: #0e3a96;
+  --ui-nav-active-text: #ffffff;
+  --ui-text: #f1f5f9;
+  --ui-muted: #8a9ab3;
+  --ui-icon: #94a3b8;
+  --ui-btn: #111c2e;
+  --ui-avatar-group-bg: #4f8bf9;
+  --ui-avatar-group-fg: #ffffff;
+  --ui-bubble-other: #152135;
+  --ui-bubble-other-text: #e2e8f0;
+}
+@theme inline {
+  --color-ui-sidebar: var(--ui-sidebar);
+  --color-ui-list: var(--ui-list);
+  --color-ui-chat: var(--ui-chat);
+  --color-ui-header: var(--ui-header);
+  --color-ui-composer: var(--ui-composer);
+  --color-ui-input: var(--ui-input);
+  --color-ui-border: var(--ui-border);
+  --color-ui-hover: var(--ui-hover);
+  --color-ui-selected: var(--ui-selected);
+  --color-ui-nav-active: var(--ui-nav-active);
+  --color-ui-nav-active-text: var(--ui-nav-active-text);
+  --color-ui-text: var(--ui-text);
+  --color-ui-muted: var(--ui-muted);
+  --color-ui-icon: var(--ui-icon);
+  --color-ui-btn: var(--ui-btn);
+  --color-ui-primary: var(--ui-primary);
+  --color-ui-primary-hover: var(--ui-primary-hover);
+  --color-ui-avatar-group-bg: var(--ui-avatar-group-bg);
+  --color-ui-avatar-group-fg: var(--ui-avatar-group-fg);
+  --color-ui-bubble-other: var(--ui-bubble-other);
+  --color-ui-bubble-other-text: var(--ui-bubble-other-text);
+}
+
 /* Optional tweaks */
 html,
 body,
@@ -39,9 +111,9 @@ body,
   color-scheme: light dark;
   --chat-border: 226 232 240; /* slate-200 */
   --chat-blue: 37 99 235; /* blue-600 */
-  --chat-bg: #f8fafc; /* slate-50 */
-  --chat-dark-bg: #070a14;
-  --chat-dark-panel: #111624;
+  --chat-bg: #f8fafd;
+  --chat-dark-bg: #081124;
+  --chat-dark-panel: #0c1626;
 }
 body {
   background-color: var(--chat-bg);
@@ -54,58 +126,16 @@ body.dark {
   --chat-bg: var(--chat-dark-bg);
 }
 
-/* Composer as glass/pill */
-.chat-composer {
-  -webkit-backdrop-filter: blur(8px) saturate(1.05);
-  backdrop-filter: blur(8px) saturate(1.05);
-  background: rgba(255, 255, 255, 0.7);
-  border-top: 1px solid rgb(var(--chat-border) / 0.7);
-}
-body.dark .chat-composer {
-  background: rgba(15, 23, 42, 0.6); /* slate-900 */
-}
-.chat-composer input:not([type="file"]) {
-  border-radius: 9999px;
-  padding: 0.5rem 1rem;
-  border: 1px solid rgb(var(--chat-border));
-  box-shadow: 0 1px 1px rgba(2, 6, 23, 0.06);
-}
-.chat-composer input:not([type="file"]):focus {
-  outline: none;
-  border-color: rgb(var(--chat-blue));
-  box-shadow: 0 0 0 2px rgba(var(--chat-blue), 0.35);
-}
 
-/* Wallpaper sutil na área de mensagens */
+/* Área de mensagens: cor lisa; papel de parede apenas se o admin configurar (--chat-wallpaper) */
 .chat-bg {
-  background-color: var(--chat-bg);
+  background-color: var(--ui-chat);
   background-image:
-    linear-gradient(
-      rgba(255, 255, 255, 0.85),
-      rgba(255, 255, 255, 0.85)
-    ),
-    url("/images/background.jpg");
+    linear-gradient(color-mix(in srgb, var(--ui-chat) 88%, transparent), color-mix(in srgb, var(--ui-chat) 88%, transparent)),
+    var(--chat-wallpaper, none);
   background-position: center;
   background-size: cover;
-  background-repeat: repeat;
-  background-attachment: fixed;
   transition: background-color 0.3s ease;
-}
-
-body.dark .chat-bg {
-  background-color: var(--chat-dark-bg);
-  background-image:
-    linear-gradient(
-      rgba(7, 10, 20, 0.85),
-      rgba(7, 10, 20, 0.85)
-    ),
-    url("/images/background.jpg");
-  background-position: center;
-  background-size: cover;
-  background-repeat: repeat;
-  background-attachment: fixed;
-  background-blend-mode: normal;
-  filter: saturate(0.75) brightness(0.9);
 }
 
 /* Garante que o painel de detalhes acompanhe o tema escuro */
@@ -131,4 +161,43 @@ body.dark .chat-right-panel,
   display: flex !important;
   transform: none !important;
   transition: none !important;
+}
+
+/* Barra de rolagem discreta (painel de emojis) */
+.emoji-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border) transparent;
+}
+.emoji-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.emoji-scroll::-webkit-scrollbar-thumb {
+  background: var(--ui-border);
+  border-radius: 9999px;
+}
+.emoji-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Seletor de reações: entrada suave */
+.reaction-pop {
+  animation: reactionPop 140ms ease-out;
+}
+@keyframes reactionPop {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Visualizador de imagem: sem barras de rolagem (a imagem é movida arrastando) */
+.viewer-area {
+  scrollbar-width: none;
+}
+.viewer-area::-webkit-scrollbar {
+  display: none;
 }

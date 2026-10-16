@@ -2,20 +2,21 @@ import express from 'express'
 import { prisma } from '../prisma.js'
 import { authRequired } from '../middleware/auth.js'
 import { z } from 'zod'
+import crypto from 'crypto'
 
 const router = express.Router()
 
-function genCode(len = 8) {
-  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+// Gerador criptograficamente seguro (Math.random é previsível)
+function randomFrom(alphabet, len) {
   let s = ''
-  for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)]
+  for (let i = 0; i < len; i++) s += alphabet[crypto.randomInt(alphabet.length)]
   return s
 }
+function genCode(len = 8) {
+  return randomFrom('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', len)
+}
 function genToken(len = 32) {
-  const c = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  let s = ''
-  for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)]
-  return s
+  return randomFrom('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', len)
 }
 
 function ensurePrisma(res) {
